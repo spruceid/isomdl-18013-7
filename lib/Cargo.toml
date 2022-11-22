@@ -1,0 +1,27 @@
+[package]
+name = "isomdl-18013-7"
+version = "0.1.0"
+edition = "2021"
+authors = ["Spruce Systems, Inc."]
+license = "MIT OR Apache-2.0"
+description = "ISOMDL 18013-7 Rust library"
+repository = "https://github.com/spruceid/isomdl-18013-7/"
+documentation = "https://docs.rs/isomdl-18013-7/"
+
+[dependencies]
+anyhow = "1.0.66"
+oidc4vp = { path = "../../oidc4vp-rs/" }
+reqwest = { version = "0.11.13", default-features = false }
+serde = { version = "1.0.147", features = ["derive"] }
+serde_urlencoded = "0.7.1"
+serde_with = "2.1.0"
+siop = { path = "../../siop-rs" }
+ssi = { path = "../../ssi", default-features = false, features = ["w3c"] }
+did-ion = { path = "../../ssi/did-ion" }
+did-web = { path = "../../ssi/did-web", default-features = false }
+did-jwk = { path = "../../ssi/did-jwk" }
+url = { version = "2.3.1", features = ["serde"] }
+uuid = { version = "1.2.2", features = ["v4"] }
+tracing = "0.1.37"
+serde_json = "1.0.89"
+chrono = "0.4.23"

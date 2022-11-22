@@ -1,0 +1,20 @@
+[package]
+name = "isomdl-18013-7-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Spruce Systems, Inc."]
+license = "MIT OR Apache-2.0"
+description = "ISOMDL 18013-7 CLI tool"
+repository = "https://github.com/spruceid/isomdl-18013-7/"
+
+[dependencies]
+anyhow = "1.0.66"
+clap = { version = "4.0.26", features = ["derive"] }
+serde = { version = "1.0.147", features = ["derive"] }
+url = { version = "2.3.1", features = ["serde"] }
+reqwest = { version = "0.11.13", default-features = false, features = ["rustls", "json"] }
+
+isomdl-18013-7 = { path = "../lib" }
+tokio = { version = "1.22.0", features = ["macros", "rt"] }
+tracing-subscriber = "0.3.16"
+console = "0.15.2"
