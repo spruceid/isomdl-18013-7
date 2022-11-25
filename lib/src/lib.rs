@@ -11,6 +11,7 @@ use isomdl::{
     },
 };
 use oidc4vp::presentation_exchange::VpToken;
+use p256::ecdsa::signature::{Signature, Signer};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::EnumMap;
@@ -164,6 +165,10 @@ impl Wallet {
 
     pub async fn response(&self, request_object: &Request, verifier_jwk: &JWK) -> Result<()> {
         let mut jwk = JWK::generate_secp256k1()?;
+        let der = include_str!("../device_key.b64");
+        let der_bytes = base64::decode(der).unwrap();
+        let device_key: p256::ecdsa::SigningKey =
+            p256::SecretKey::from_sec1_der(&der_bytes).unwrap().into();
         let did = DIDJWK.generate(&Source::Key(&jwk)).unwrap();
         let kid = DIDJWK
             .resolve(&did, &ResolutionInputMetadata::default())
@@ -187,14 +192,19 @@ impl Wallet {
         )
         .expect("failed to prepare response");
         while let Some((_, payload)) = prepared_response.get_next_signature_payload() {
-            let signature = jws::sign_bytes(jwk.get_algorithm().unwrap(), payload, &jwk)?;
-            prepared_response.submit_next_signature(signature);
+            let signature = device_key.sign(payload);
+            prepared_response.submit_next_signature(signature.as_bytes().to_vec());
         }
-        let _documents: Vec<String> = prepared_response
-            .finalize_oid4vp_response()
-            .iter()
-            .map(Stringify::stringify)
-            .collect::<Result<_, _>>()
+        // let _documents: Vec<String> = prepared_response
+        //     .finalize_oid4vp_response()
+        //     .iter()
+        //     .map(|doc| {
+        //         serde_cbor::to_vec(&doc)
+        //             .map(|doc| base64::encode_config(&doc, base64::URL_SAFE_NO_PAD))
+        //     })
+        //     .collect::<Result<_, _>>()
+        let _documents: String = serde_cbor::to_vec(&prepared_response.finalize_oid4vp_response())
+            .map(|docs| base64::encode_config(&docs, base64::URL_SAFE_NO_PAD))
             .unwrap();
 
         let vp = Presentation {
@@ -203,7 +213,7 @@ impl Wallet {
             ))),
             type_: OneOrMany::One("VerifiablePresentation".to_string()),
             property_set: Some(
-                [("mso_mdoc".to_string(), json!(_documents[0]))]
+                [("mso_mdoc".to_string(), json!([_documents]))]
                     .iter()
                     .cloned()
                     .collect(),
@@ -232,7 +242,8 @@ impl Wallet {
                         sub_jwk: None,
                         vp_token: None,
                     },
-                ),
+                )
+                .set_nonce(Some(request_object.request_parameters.nonce.clone())),
                 PrivateWebKey::new(&jwk),
                 SigningAlgorithm(jwk.get_algorithm().unwrap()),
             )?,
