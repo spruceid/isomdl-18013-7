@@ -2,7 +2,7 @@
 members = [
     "lib",
     "cli",
-    "dart"
+    # "dart"
 ]
 
 # [profile.release]
