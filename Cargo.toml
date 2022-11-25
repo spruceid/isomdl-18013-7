@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "lib",
-    "cli"
+    "cli",
+    "dart"
 ]
 
 # [profile.release]

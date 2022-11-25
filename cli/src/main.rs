@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
-use isomdl_18013_7::Wallet;
+use isomdl_18013_7::{RedirectType, Wallet};
 use url::Url;
 
 #[derive(Parser)]
@@ -25,21 +25,23 @@ enum WalletCommands {
 }
 
 async fn submit(url: &Url) -> Result<()> {
-    let wallet = Wallet {
-        client: reqwest::Client::new(),
-    };
+    let wallet = Wallet::new();
     println!(
         "{} {}Request...",
         style("[1/2]").bold().dim(),
         Emoji("➡️ ", "")
     );
-    let request_object = wallet.request(url).await?;
+    let (request_object_inner, verifier_jwk) = wallet.request(url).await?;
+    let request_object = match request_object_inner {
+        RedirectType::Post(req) => req,
+        isomdl_18013_7::RedirectType::InApp(_) => Err(anyhow!("Unsupported in-app redirect flow"))?,
+    };
     println!(
         "{} {}Response...",
         style("[2/2]").bold().dim(),
         Emoji("➡️ ", "")
     );
-    wallet.response(request_object).await?;
+    wallet.response(&request_object, &verifier_jwk).await?;
     Ok(())
 }
 

@@ -1,6 +1,15 @@
+use std::fs::File;
+
 use anyhow::{anyhow, Context, Result};
 use chrono::{Duration, Utc};
 use did_jwk::DIDJWK;
+use isomdl::{
+    definitions::helpers::NonEmptyMap,
+    presentation::{
+        device::{oid4vp::SessionManager, Documents},
+        Stringify,
+    },
+};
 use oidc4vp::presentation_exchange::VpToken;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -11,14 +20,17 @@ use siop::{
     IdToken, IdTokenAdditionalClaims, IdTokenClaims, PrivateWebKey, SigningAlgorithm,
 };
 use ssi::{
-    did::{DIDMethod, Source},
-    did_resolve::{DIDResolver, ResolutionInputMetadata},
+    did::{DIDMethod, Source, VerificationRelationship},
+    did_resolve::{get_verification_methods, DIDResolver, ResolutionInputMetadata},
     jwk::{Algorithm, JWK},
+    jws::{self, decode_jws_parts, split_jws},
     jwt, ldp,
     vc::{Contexts, LinkedDataProofOptions, OneOrMany, Presentation, URI},
 };
 use url::Url;
 use uuid::Uuid;
+
+const SCHEME: &str = "mdl-openid4vp";
 
 #[derive(Deserialize)]
 struct RedirectUrl {
@@ -76,13 +88,49 @@ pub struct ResponseRequestJWT {
     state: Option<String>,
 }
 
+#[derive(Default)]
 pub struct Wallet {
-    pub client: reqwest::Client,
+    client: reqwest::Client,
+}
+
+pub enum RedirectType {
+    InApp(Url),
+    Post(Request),
+}
+
+async fn get_jwk(jwt: String) -> Result<JWK> {
+    let (headers, payload, sig) = split_jws(&jwt)?;
+    let decoded = decode_jws_parts(headers, payload.as_bytes(), sig)?;
+    let key_id = decoded.header.key_id.unwrap();
+    let did = key_id.strip_suffix("#auth-key").unwrap();
+    println!("{}", did);
+    let vms = get_verification_methods(did, VerificationRelationship::Authentication, &DIDJWK)
+        .await
+        .map_err(|e| anyhow!("DID resolution failed: {e}"))?;
+    if let Some((_, vm)) = vms.iter().find(|(_, vm)| vm.public_key_jwk.is_some()) {
+        let mut jwk = vm.public_key_jwk.as_ref().unwrap().clone();
+        // jwk.key_id = jwk.key_id.map(|kid| {
+        //     // TODO would be better with a DID type
+        //     format!("{}#{}", sub, kid)
+        // });
+        Ok(jwk)
+    } else {
+        Err(anyhow!("Unable to find a verification method with JWK"))
+    }
 }
 
 impl Wallet {
-    pub async fn request(&self, url: &Url) -> Result<Request> {
-        if url.scheme() != "mdl-openid4vp" {
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::builder()
+                .connection_verbose(true)
+                .build()
+                .unwrap(),
+        }
+    }
+
+    pub async fn request(&self, url: &Url) -> Result<(RedirectType, JWK)> {
+        if url.scheme() != SCHEME {
             return Err(anyhow!("Invalid scheme"));
         }
         if url.query().is_none() {
@@ -99,12 +147,22 @@ impl Wallet {
             .error_for_status()?
             .text()
             .await?;
+        let jwk = get_jwk(request_jwt.clone()).await?;
         let request_object: Request =
-            jwt::decode_unverified(&request_jwt).context("Could not decode JWT")?;
-        Ok(request_object)
+            jwt::decode_verify(&request_jwt, &jwk).context("Could not decode JWT")?;
+        let uri = request_object.request_parameters.redirect_uri.url();
+        // TODO not sure about this
+        Ok((
+            if uri.scheme() == SCHEME {
+                RedirectType::InApp(uri.clone())
+            } else {
+                RedirectType::Post(request_object)
+            },
+            jwk,
+        ))
     }
 
-    pub async fn response(&self, request_object: Request) -> Result<()> {
+    pub async fn response(&self, request_object: &Request, verifier_jwk: &JWK) -> Result<()> {
         let mut jwk = JWK::generate_secp256k1()?;
         let did = DIDJWK.generate(&Source::Key(&jwk)).unwrap();
         let kid = DIDJWK
@@ -116,14 +174,36 @@ impl Wallet {
             .unwrap()[0]
             .get_id(&did);
         jwk.key_id = Some(kid.clone());
-        let mdoc = "".to_string();
+
+        let mdoc_documents_fd = File::open("../lib/mdoc_documents")?;
+        let mdoc_documents: Documents = serde_cbor::from_reader(mdoc_documents_fd)?;
+        let mut prepared_response = SessionManager::prepare_oid4vp_response(
+            mdoc_documents,
+            request_object.request_parameters.client_id.to_string(),
+            request_object.request_parameters.nonce.secret().to_string(),
+            jwk.clone(),
+            verifier_jwk.clone(),
+            serde_json::Value::Null,
+        )
+        .expect("failed to prepare response");
+        while let Some((_, payload)) = prepared_response.get_next_signature_payload() {
+            let signature = jws::sign_bytes(jwk.get_algorithm().unwrap(), payload, &jwk)?;
+            prepared_response.submit_next_signature(signature);
+        }
+        let _documents: Vec<String> = prepared_response
+            .finalize_oid4vp_response()
+            .iter()
+            .map(Stringify::stringify)
+            .collect::<Result<_, _>>()
+            .unwrap();
+
         let vp = Presentation {
             context: Contexts::One(ldp::Context::URI(URI::String(
                 "https://www.w3.org/2018/credentials/v1".to_string(),
             ))),
             type_: OneOrMany::One("VerifiablePresentation".to_string()),
             property_set: Some(
-                [("mso_mdoc".to_string(), json!(mdoc))]
+                [("mso_mdoc".to_string(), json!(_documents[0]))]
                     .iter()
                     .cloned()
                     .collect(),
@@ -140,7 +220,7 @@ impl Wallet {
             id_token: IdToken::new(
                 IdTokenClaims::new(
                     IssuerUrl::from_url(
-                        Url::parse("https://self-issued.me/v2/mdl-openid4vp").unwrap(),
+                        Url::parse(&format!("https://self-issued.me/v2/{}", SCHEME)).unwrap(),
                     ),
                     vec![Audience::new(
                         request_object.request_parameters.client_id.to_string(),
