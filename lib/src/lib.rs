@@ -1,5 +1,3 @@
-use std::fs::File;
-
 use anyhow::{anyhow, Context, Result};
 use chrono::{Duration, Utc};
 use did_jwk::DIDJWK;
@@ -19,8 +17,8 @@ use siop::{
     IdToken, IdTokenAdditionalClaims, IdTokenClaims, PrivateWebKey, SigningAlgorithm,
 };
 use ssi::{
-    did::{DIDMethod, Source, VerificationRelationship},
-    did_resolve::{get_verification_methods, DIDResolver, ResolutionInputMetadata},
+    did::{DIDMethod, Source},
+    did_resolve::{DIDResolver, ResolutionInputMetadata},
     jwk::{Algorithm, JWK},
     jws::{decode_jws_parts, split_jws},
     jwt, ldp,
@@ -107,7 +105,10 @@ pub enum RedirectType {
 async fn get_jwk(jwt: String) -> Result<JWK> {
     let (headers, payload, sig) = split_jws(&jwt)?;
     let decoded = decode_jws_parts(headers, payload.as_bytes(), sig)?;
-    let key_id = decoded.header.key_id.ok_or_else(|| anyhow!("key_id is missing from jwt header"))?;
+    let key_id = decoded
+        .header
+        .key_id
+        .ok_or_else(|| anyhow!("key_id is missing from jwt header"))?;
     let did = key_id.strip_suffix("#auth-key").unwrap_or(key_id.as_str());
     let b64 = did.strip_prefix("did:jwk:").unwrap_or(did);
     let jwk_bytes = base64::decode_config(&b64, base64::URL_SAFE)?;
@@ -160,8 +161,8 @@ impl Wallet {
             jwt::decode_verify(&request_jwt, &verifier_jwk).context("Could not decode JWT")?;
         let uri = request_object.request_parameters.redirect_uri.url();
 
-        let mdoc_documents_fd = File::open("lib/mdoc_documents")?;
-        let mdoc_documents: Documents = serde_cbor::from_reader(mdoc_documents_fd)?;
+        let mdoc_documents: Documents =
+            serde_cbor::from_slice(include_bytes!("../mdoc_documents"))?;
         let manager = SessionManager::new(
             mdoc_documents,
             request_object.request_parameters.client_id.to_string(),
@@ -173,7 +174,9 @@ impl Wallet {
         .expect("failed to prepare response");
         let requested_items = manager.requested_items();
 
-        if let CoreResponseMode::Extension(ref mode) = request_object.request_parameters.response_mode {
+        if let CoreResponseMode::Extension(ref mode) =
+            request_object.request_parameters.response_mode
+        {
             if mode == "post" {
                 return Ok(RedirectType::Post {
                     request_object,
