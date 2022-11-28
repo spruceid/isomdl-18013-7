@@ -1,5 +1,3 @@
-use std::fs::File;
-
 use anyhow::{anyhow, Context, Result};
 use chrono::{Duration, Utc};
 use did_jwk::DIDJWK;
@@ -12,13 +10,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::EnumMap;
 use siop::{
-    openidconnect::{Audience, IssuerUrl, StandardClaims, SubjectIdentifier, ToSUrl},
+    openidconnect::{
+        core::CoreResponseMode, Audience, IssuerUrl, StandardClaims, SubjectIdentifier, ToSUrl,
+    },
     rp::RequestParameters,
     IdToken, IdTokenAdditionalClaims, IdTokenClaims, PrivateWebKey, SigningAlgorithm,
 };
 use ssi::{
-    did::{DIDMethod, Source, VerificationRelationship},
-    did_resolve::{get_verification_methods, DIDResolver, ResolutionInputMetadata},
+    did::{DIDMethod, Source},
+    did_resolve::{DIDResolver, ResolutionInputMetadata},
     jwk::{Algorithm, JWK},
     jws::{decode_jws_parts, split_jws},
     jwt, ldp,
@@ -105,22 +105,27 @@ pub enum RedirectType {
 async fn get_jwk(jwt: String) -> Result<JWK> {
     let (headers, payload, sig) = split_jws(&jwt)?;
     let decoded = decode_jws_parts(headers, payload.as_bytes(), sig)?;
-    let key_id = decoded.header.key_id.unwrap();
-    let did = key_id.strip_suffix("#auth-key").unwrap();
-    println!("{}", did);
-    let vms = get_verification_methods(did, VerificationRelationship::Authentication, &DIDJWK)
-        .await
-        .map_err(|e| anyhow!("DID resolution failed: {e}"))?;
-    if let Some((_, vm)) = vms.iter().find(|(_, vm)| vm.public_key_jwk.is_some()) {
-        let jwk = vm.public_key_jwk.as_ref().unwrap().clone();
-        // jwk.key_id = jwk.key_id.map(|kid| {
-        //     // TODO would be better with a DID type
-        //     format!("{}#{}", sub, kid)
-        // });
-        Ok(jwk)
-    } else {
-        Err(anyhow!("Unable to find a verification method with JWK"))
-    }
+    let key_id = decoded
+        .header
+        .key_id
+        .ok_or_else(|| anyhow!("key_id is missing from jwt header"))?;
+    let did = key_id.strip_suffix("#auth-key").unwrap_or(key_id.as_str());
+    let b64 = did.strip_prefix("did:jwk:").unwrap_or(did);
+    let jwk_bytes = base64::decode_config(&b64, base64::URL_SAFE)?;
+    serde_json::from_slice(&jwk_bytes).map_err(Into::into)
+    //let vms = get_verification_methods(did, VerificationRelationship::Authentication, &DIDJWK)
+    //    .await
+    //    .map_err(|e| anyhow!("DID resolution failed: {e}"))?;
+    //if let Some((_, vm)) = vms.iter().find(|(_, vm)| vm.public_key_jwk.is_some()) {
+    //    let jwk = vm.public_key_jwk.as_ref().unwrap().clone();
+    //    // jwk.key_id = jwk.key_id.map(|kid| {
+    //    //     // TODO would be better with a DID type
+    //    //     format!("{}#{}", sub, kid)
+    //    // });
+    //    Ok(jwk)
+    //} else {
+    //    Err(anyhow!("Unable to find a verification method with JWK"))
+    //}
 }
 
 impl Wallet {
@@ -156,8 +161,8 @@ impl Wallet {
             jwt::decode_verify(&request_jwt, &verifier_jwk).context("Could not decode JWT")?;
         let uri = request_object.request_parameters.redirect_uri.url();
 
-        let mdoc_documents_fd = File::open("../lib/mdoc_documents")?;
-        let mdoc_documents: Documents = serde_cbor::from_reader(mdoc_documents_fd)?;
+        let mdoc_documents: Documents =
+            serde_cbor::from_slice(include_bytes!("../mdoc_documents"))?;
         let manager = SessionManager::new(
             mdoc_documents,
             request_object.request_parameters.client_id.to_string(),
@@ -169,16 +174,18 @@ impl Wallet {
         .expect("failed to prepare response");
         let requested_items = manager.requested_items();
 
-        // TODO not sure about this
-        Ok(if uri.scheme() == SCHEME {
-            RedirectType::InApp(uri.clone())
-        } else {
-            RedirectType::Post {
-                request_object,
-                requested_items: requested_items.to_vec(),
-                manager,
+        if let CoreResponseMode::Extension(ref mode) =
+            request_object.request_parameters.response_mode
+        {
+            if mode == "post" {
+                return Ok(RedirectType::Post {
+                    request_object,
+                    requested_items: requested_items.to_vec(),
+                    manager,
+                });
             }
-        })
+        }
+        return Ok(RedirectType::InApp(uri.clone()));
     }
 
     pub async fn response(
