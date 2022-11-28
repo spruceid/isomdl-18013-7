@@ -3,12 +3,8 @@ use std::fs::File;
 use anyhow::{anyhow, Context, Result};
 use chrono::{Duration, Utc};
 use did_jwk::DIDJWK;
-use isomdl::{
-    definitions::helpers::NonEmptyMap,
-    presentation::{
-        device::{oid4vp::SessionManager, Documents},
-        Stringify,
-    },
+use isomdl::presentation::device::{
+    oid4vp::SessionManager, DeviceSession, Documents, PermittedItems, RequestedItems,
 };
 use oidc4vp::presentation_exchange::VpToken;
 use p256::ecdsa::signature::{Signature, Signer};
@@ -24,12 +20,15 @@ use ssi::{
     did::{DIDMethod, Source, VerificationRelationship},
     did_resolve::{get_verification_methods, DIDResolver, ResolutionInputMetadata},
     jwk::{Algorithm, JWK},
-    jws::{self, decode_jws_parts, split_jws},
+    jws::{decode_jws_parts, split_jws},
     jwt, ldp,
     vc::{Contexts, LinkedDataProofOptions, OneOrMany, Presentation, URI},
 };
 use url::Url;
 use uuid::Uuid;
+
+pub use isomdl;
+pub use ssi;
 
 const SCHEME: &str = "mdl-openid4vp";
 
@@ -89,14 +88,18 @@ pub struct ResponseRequestJWT {
     state: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Wallet {
     client: reqwest::Client,
 }
 
 pub enum RedirectType {
     InApp(Url),
-    Post(Request),
+    Post {
+        request_object: Request,
+        requested_items: RequestedItems,
+        manager: SessionManager,
+    },
 }
 
 async fn get_jwk(jwt: String) -> Result<JWK> {
@@ -109,7 +112,7 @@ async fn get_jwk(jwt: String) -> Result<JWK> {
         .await
         .map_err(|e| anyhow!("DID resolution failed: {e}"))?;
     if let Some((_, vm)) = vms.iter().find(|(_, vm)| vm.public_key_jwk.is_some()) {
-        let mut jwk = vm.public_key_jwk.as_ref().unwrap().clone();
+        let jwk = vm.public_key_jwk.as_ref().unwrap().clone();
         // jwk.key_id = jwk.key_id.map(|kid| {
         //     // TODO would be better with a DID type
         //     format!("{}#{}", sub, kid)
@@ -130,7 +133,7 @@ impl Wallet {
         }
     }
 
-    pub async fn request(&self, url: &Url) -> Result<(RedirectType, JWK)> {
+    pub async fn request(&self, url: &Url) -> Result<RedirectType> {
         if url.scheme() != SCHEME {
             return Err(anyhow!("Invalid scheme"));
         }
@@ -148,22 +151,43 @@ impl Wallet {
             .error_for_status()?
             .text()
             .await?;
-        let jwk = get_jwk(request_jwt.clone()).await?;
+        let verifier_jwk = get_jwk(request_jwt.clone()).await?;
         let request_object: Request =
-            jwt::decode_verify(&request_jwt, &jwk).context("Could not decode JWT")?;
+            jwt::decode_verify(&request_jwt, &verifier_jwk).context("Could not decode JWT")?;
         let uri = request_object.request_parameters.redirect_uri.url();
+
+        let mdoc_documents_fd = File::open("../lib/mdoc_documents")?;
+        let mdoc_documents: Documents = serde_cbor::from_reader(mdoc_documents_fd)?;
+        let manager = SessionManager::new(
+            mdoc_documents,
+            request_object.request_parameters.client_id.to_string(),
+            request_object.request_parameters.nonce.secret().to_string(),
+            JWK::generate_secp256k1()?, // jwk.clone(),
+            verifier_jwk,
+            serde_json::Value::Null,
+        )
+        .expect("failed to prepare response");
+        let requested_items = manager.requested_items();
+
         // TODO not sure about this
-        Ok((
-            if uri.scheme() == SCHEME {
-                RedirectType::InApp(uri.clone())
-            } else {
-                RedirectType::Post(request_object)
-            },
-            jwk,
-        ))
+        Ok(if uri.scheme() == SCHEME {
+            RedirectType::InApp(uri.clone())
+        } else {
+            RedirectType::Post {
+                request_object,
+                requested_items: requested_items.to_vec(),
+                manager,
+            }
+        })
     }
 
-    pub async fn response(&self, request_object: &Request, verifier_jwk: &JWK) -> Result<()> {
+    pub async fn response(
+        &self,
+        request_object: &Request,
+        manager: &SessionManager,
+        requested_items: &RequestedItems,
+        permitted_items: PermittedItems,
+    ) -> Result<()> {
         let mut jwk = JWK::generate_secp256k1()?;
         let der = include_str!("../device_key.b64");
         let der_bytes = base64::decode(der).unwrap();
@@ -180,17 +204,7 @@ impl Wallet {
             .get_id(&did);
         jwk.key_id = Some(kid.clone());
 
-        let mdoc_documents_fd = File::open("../lib/mdoc_documents")?;
-        let mdoc_documents: Documents = serde_cbor::from_reader(mdoc_documents_fd)?;
-        let mut prepared_response = SessionManager::prepare_oid4vp_response(
-            mdoc_documents,
-            request_object.request_parameters.client_id.to_string(),
-            request_object.request_parameters.nonce.secret().to_string(),
-            jwk.clone(),
-            verifier_jwk.clone(),
-            serde_json::Value::Null,
-        )
-        .expect("failed to prepare response");
+        let mut prepared_response = manager.prepare_response(requested_items, permitted_items);
         while let Some((_, payload)) = prepared_response.get_next_signature_payload() {
             let signature = device_key.sign(payload);
             prepared_response.submit_next_signature(signature.as_bytes().to_vec());

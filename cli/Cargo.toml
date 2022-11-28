@@ -17,3 +17,4 @@ isomdl-18013-7 = { path = "../lib" }
 tokio = { version = "1.22.0", features = ["macros", "rt"] }
 tracing-subscriber = "0.3.16"
 console = "0.15.2"
+dialoguer = "0.10.2"
