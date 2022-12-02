@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
-use dialoguer::Confirm;
-use isomdl_18013_7::{isomdl::presentation::device::PermittedItems, RedirectType, Wallet};
+use dialoguer::{theme::ColorfulTheme, Confirm};
+use isomdl_18013_7::{isomdl::presentation::device::PermittedItems, ResponseRedirectType, Wallet};
 use url::Url;
 
 #[derive(Parser)]
@@ -32,17 +32,10 @@ async fn submit(url: &Url) -> Result<()> {
         style("[1/2]").bold().dim(),
         Emoji("➡️ ", "")
     );
-    let redirect_type = wallet.request(url).await?;
-    let (request_object, requested_items, manager) = match redirect_type {
-        RedirectType::Post {
-            request_object,
-            requested_items,
-            manager,
-        } => (request_object, requested_items, manager),
-        isomdl_18013_7::RedirectType::InApp(_) => Err(anyhow!("Unsupported in-app redirect flow"))?,
-    };
+    let request_response = wallet.request(url).await?;
 
-    let permitted_items: PermittedItems = requested_items
+    let permitted_items: PermittedItems = request_response
+        .requested_items
         .clone()
         .into_iter()
         .map(|req| {
@@ -58,11 +51,12 @@ async fn submit(url: &Url) -> Result<()> {
             (req.doc_type, namespaces)
         })
         .collect();
-    if !Confirm::new()
+    if !Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt(format!(
             "Do you want to shared the following information: {:?}?",
             permitted_items,
         ))
+        .report(false)
         .interact()?
     {
         return Err(anyhow!("Exchange aborted."));
@@ -73,10 +67,28 @@ async fn submit(url: &Url) -> Result<()> {
         style("[2/2]").bold().dim(),
         Emoji("➡️ ", "")
     );
-    wallet
-        .response(&request_object, &manager, &requested_items, permitted_items)
-        .await?;
-    Ok(())
+    match wallet
+        .response(
+            &request_response.request_object,
+            &request_response.manager,
+            &request_response.requested_items,
+            permitted_items,
+        )
+        .await?
+    {
+        ResponseRedirectType::Post => Ok(()),
+        ResponseRedirectType::InApp(url) => {
+            let url_str = url.to_string();
+            if !Confirm::new()
+                .with_prompt(format!("You will now be redirected to: {}", url_str,))
+                .interact()?
+            {
+                return Err(anyhow!("Exchange aborted."));
+            }
+            open::that(url_str)?;
+            Ok(())
+        }
+    }
 }
 
 #[tokio::main]

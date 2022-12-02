@@ -18,3 +18,4 @@ tokio = { version = "1.22.0", features = ["macros", "rt"] }
 tracing-subscriber = "0.3.16"
 console = "0.15.2"
 dialoguer = "0.10.2"
+open = "3.2.0"

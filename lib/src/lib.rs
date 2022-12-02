@@ -7,11 +7,11 @@ use isomdl::presentation::device::{
 use oidc4vp::presentation_exchange::VpToken;
 use p256::ecdsa::signature::{Signature, Signer};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use serde_with::EnumMap;
 use siop::{
     openidconnect::{
-        core::CoreResponseMode, Audience, IssuerUrl, StandardClaims, SubjectIdentifier, ToSUrl,
+        core::{CoreResponseMode, CoreResponseType},
+        Audience, IssuerUrl, StandardClaims, SubjectIdentifier, ToSUrl,
     },
     rp::RequestParameters,
     IdToken, IdTokenAdditionalClaims, IdTokenClaims, PrivateWebKey, SigningAlgorithm,
@@ -21,8 +21,7 @@ use ssi::{
     did_resolve::{DIDResolver, ResolutionInputMetadata},
     jwk::{Algorithm, JWK},
     jws::{decode_jws_parts, split_jws},
-    jwt, ldp,
-    vc::{Contexts, LinkedDataProofOptions, OneOrMany, Presentation, URI},
+    jwt,
 };
 use url::Url;
 use uuid::Uuid;
@@ -82,7 +81,8 @@ pub struct Request {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseRequestJWT {
-    id_token: IdToken,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id_token: Option<IdToken>,
     vp_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<String>,
@@ -93,13 +93,15 @@ pub struct Wallet {
     client: reqwest::Client,
 }
 
-pub enum RedirectType {
+pub enum ResponseRedirectType {
     InApp(Url),
-    Post {
-        request_object: Request,
-        requested_items: RequestedItems,
-        manager: SessionManager,
-    },
+    Post,
+}
+
+pub struct ResponseParams {
+    pub request_object: Request,
+    pub requested_items: RequestedItems,
+    pub manager: SessionManager,
 }
 
 async fn get_jwk(jwt: String) -> Result<JWK> {
@@ -111,7 +113,7 @@ async fn get_jwk(jwt: String) -> Result<JWK> {
         .ok_or_else(|| anyhow!("key_id is missing from jwt header"))?;
     let did = key_id.strip_suffix("#auth-key").unwrap_or(key_id.as_str());
     let b64 = did.strip_prefix("did:jwk:").unwrap_or(did);
-    let jwk_bytes = base64::decode_config(&b64, base64::URL_SAFE)?;
+    let jwk_bytes = base64::decode_config(b64, base64::URL_SAFE)?;
     serde_json::from_slice(&jwk_bytes).map_err(Into::into)
     //let vms = get_verification_methods(did, VerificationRelationship::Authentication, &DIDJWK)
     //    .await
@@ -138,7 +140,7 @@ impl Wallet {
         }
     }
 
-    pub async fn request(&self, url: &Url) -> Result<RedirectType> {
+    pub async fn request(&self, url: &Url) -> Result<ResponseParams> {
         if url.scheme() != SCHEME {
             return Err(anyhow!("Invalid scheme"));
         }
@@ -159,7 +161,6 @@ impl Wallet {
         let verifier_jwk = get_jwk(request_jwt.clone()).await?;
         let request_object: Request =
             jwt::decode_verify(&request_jwt, &verifier_jwk).context("Could not decode JWT")?;
-        let uri = request_object.request_parameters.redirect_uri.url();
 
         let mdoc_documents: Documents =
             serde_cbor::from_slice(include_bytes!("../mdoc_documents"))?;
@@ -167,25 +168,18 @@ impl Wallet {
             mdoc_documents,
             request_object.request_parameters.client_id.to_string(),
             request_object.request_parameters.nonce.secret().to_string(),
-            JWK::generate_secp256k1()?, // jwk.clone(),
+            JWK::generate_p256()?, // jwk.clone(),
             verifier_jwk,
             serde_json::Value::Null,
         )
         .expect("failed to prepare response");
         let requested_items = manager.requested_items();
 
-        if let CoreResponseMode::Extension(ref mode) =
-            request_object.request_parameters.response_mode
-        {
-            if mode == "post" {
-                return Ok(RedirectType::Post {
-                    request_object,
-                    requested_items: requested_items.to_vec(),
-                    manager,
-                });
-            }
-        }
-        return Ok(RedirectType::InApp(uri.clone()));
+        Ok(ResponseParams {
+            request_object,
+            requested_items: requested_items.to_vec(),
+            manager,
+        })
     }
 
     pub async fn response(
@@ -194,12 +188,17 @@ impl Wallet {
         manager: &SessionManager,
         requested_items: &RequestedItems,
         permitted_items: PermittedItems,
-    ) -> Result<()> {
-        let mut jwk = JWK::generate_secp256k1()?;
+    ) -> Result<ResponseRedirectType> {
+        let mut jwk = JWK::generate_p256()?;
         let der = include_str!("../device_key.b64");
         let der_bytes = base64::decode(der).unwrap();
         let device_key: p256::ecdsa::SigningKey =
             p256::SecretKey::from_sec1_der(&der_bytes).unwrap().into();
+        println!(
+            "{:?} {:?}",
+            device_key.verifying_key().to_encoded_point(false).x(),
+            device_key.verifying_key().to_encoded_point(false).y()
+        );
         let did = DIDJWK.generate(&Source::Key(&jwk)).unwrap();
         let kid = DIDJWK
             .resolve(&did, &ResolutionInputMetadata::default())
@@ -216,39 +215,12 @@ impl Wallet {
             let signature = device_key.sign(payload);
             prepared_response.submit_next_signature(signature.as_bytes().to_vec());
         }
-        // let _documents: Vec<String> = prepared_response
-        //     .finalize_oid4vp_response()
-        //     .iter()
-        //     .map(|doc| {
-        //         serde_cbor::to_vec(&doc)
-        //             .map(|doc| base64::encode_config(&doc, base64::URL_SAFE_NO_PAD))
-        //     })
-        //     .collect::<Result<_, _>>()
         let _documents: String = serde_cbor::to_vec(&prepared_response.finalize_oid4vp_response())
             .map(|docs| base64::encode_config(&docs, base64::URL_SAFE_NO_PAD))
             .unwrap();
 
-        let vp = Presentation {
-            context: Contexts::One(ldp::Context::URI(URI::String(
-                "https://www.w3.org/2018/credentials/v1".to_string(),
-            ))),
-            type_: OneOrMany::One("VerifiablePresentation".to_string()),
-            property_set: Some(
-                [("mso_mdoc".to_string(), json!([_documents]))]
-                    .iter()
-                    .cloned()
-                    .collect(),
-            ),
-            ..Default::default()
-        };
-        let options = LinkedDataProofOptions {
-            checks: None,
-            created: None,
-            proof_purpose: None,
-            ..Default::default()
-        };
-        let response_request = ResponseRequestJWT {
-            id_token: IdToken::new(
+        let id_token = match &request_object.request_parameters.response_type {
+            CoreResponseType::IdToken => Some(IdToken::new(
                 IdTokenClaims::new(
                     IssuerUrl::from_url(
                         Url::parse(&format!("https://self-issued.me/v2/{}", SCHEME)).unwrap(),
@@ -267,16 +239,39 @@ impl Wallet {
                 .set_nonce(Some(request_object.request_parameters.nonce.clone())),
                 PrivateWebKey::new(&jwk),
                 SigningAlgorithm(jwk.get_algorithm().unwrap()),
-            )?,
-            vp_token: vp.generate_jwt(Some(&jwk), &options, &DIDJWK).await?,
+            )?),
+            CoreResponseType::Extension(e) => match e.as_str() {
+                "vp_token" => None,
+                t => return Err(anyhow!("Unsupported response_type: {}", t)),
+            },
+            _ => return Err(anyhow!("Unsupported response_type")),
+        };
+
+        let response_request = ResponseRequestJWT {
+            id_token,
+            vp_token: _documents,
             state: request_object.state.clone(),
         };
-        self.client
-            .post(request_object.request_parameters.redirect_uri.url().clone())
-            .form(&response_request)
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
+
+        match &request_object.request_parameters.response_mode {
+            CoreResponseMode::Extension(mode) => match mode.as_str() {
+                "post" => {
+                    self.client
+                        .post(request_object.request_parameters.redirect_uri.url().clone())
+                        .form(&response_request)
+                        .send()
+                        .await?
+                        .error_for_status()?;
+                    Ok(ResponseRedirectType::Post)
+                }
+                m => Err(anyhow!("Unknown response_mode: {}", m)),
+            },
+            CoreResponseMode::Fragment => {
+                let mut url = request_object.request_parameters.redirect_uri.url().clone();
+                url.set_fragment(Some(&serde_urlencoded::to_string(&response_request)?));
+                Ok(ResponseRedirectType::InApp(url))
+            }
+            _ => Err(anyhow!("No response_mode")),
+        }
     }
 }
