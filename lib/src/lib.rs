@@ -168,7 +168,6 @@ impl Wallet {
             mdoc_documents,
             request_object.request_parameters.client_id.to_string(),
             request_object.request_parameters.nonce.secret().to_string(),
-            JWK::generate_p256()?, // jwk.clone(),
             verifier_jwk,
             serde_json::Value::Null,
         )
