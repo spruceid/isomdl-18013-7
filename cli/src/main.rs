@@ -44,7 +44,11 @@ async fn submit(url: &Url) -> Result<()> {
                 .into_inner()
                 .into_iter()
                 .map(|(ns, es)| {
-                    let ids = es.into_inner().into_keys().collect();
+                    let ids = es.into_inner()
+                        .into_keys()
+                        // Portrait makes the request too large on the cli.
+                        .filter(|key| key != "portrait")
+                        .collect();
                     (ns, ids)
                 })
                 .collect();

@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use chrono::{Duration, Utc};
 use did_jwk::DIDJWK;
 use isomdl::presentation::device::{
     oid4vp::SessionManager, DeviceSession, Documents, PermittedItems, RequestedItems,
@@ -8,13 +7,10 @@ use oidc4vp::presentation_exchange::VpToken;
 use p256::ecdsa::signature::{Signature, Signer};
 use serde::{Deserialize, Serialize};
 use serde_with::EnumMap;
-use siop::{
-    openidconnect::{
-        core::{CoreResponseMode, CoreResponseType},
-        Audience, IssuerUrl, StandardClaims, SubjectIdentifier, ToSUrl,
-    },
-    rp::RequestParameters,
-    IdToken, IdTokenAdditionalClaims, IdTokenClaims, PrivateWebKey, SigningAlgorithm,
+use openidconnect::{
+    core::{CoreResponseMode, CoreResponseType},
+    ToSUrl,
+    ClientId, Nonce, RedirectUrl,
 };
 use ssi::{
     did::{DIDMethod, Source},
@@ -24,7 +20,6 @@ use ssi::{
     jwt,
 };
 use url::Url;
-use uuid::Uuid;
 
 pub use isomdl;
 pub use ssi;
@@ -32,7 +27,7 @@ pub use ssi;
 const SCHEME: &str = "mdl-openid4vp";
 
 #[derive(Deserialize)]
-struct RedirectUrl {
+struct RequestUri {
     request_uri: Url,
 }
 
@@ -65,24 +60,31 @@ struct RegistrationMetadataAdditional {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RequestParameters {
+    pub response_type: CoreResponseType,
+    pub response_mode: CoreResponseMode,
+    pub client_id: ClientId, // DIDURL, // TODO should just be a DID but it's private in ssi
+    pub redirect_uri: RedirectUrl,
+    pub nonce: Nonce,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Request {
     #[serde(flatten)]
     request_parameters: RequestParameters,
-    registration: RegistrationMetadataAdditional,
-    claims: RequestClaims, // TODO probably needs to come from openidconnect
+    //registration: RegistrationMetadataAdditional,
+    //claims: RequestClaims, // TODO probably needs to come from openidconnect
     exp: i64,
     iat: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     nbf: Option<i64>,
-    jti: Uuid,
+    //jti: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseRequestJWT {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id_token: Option<IdToken>,
     vp_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<String>,
@@ -130,6 +132,11 @@ async fn get_jwk(jwt: String) -> Result<JWK> {
     //}
 }
 
+#[derive(Deserialize, Serialize, Clone, Debug)]
+struct ERPK {
+    ephemeral_reader_public_key: String
+}
+
 impl Wallet {
     pub fn new() -> Self {
         Self {
@@ -147,20 +154,37 @@ impl Wallet {
         if url.query().is_none() {
             return Err(anyhow!("Missing query params"));
         }
-        let redirect_url: RedirectUrl =
+        let request_uri: RequestUri =
             serde_urlencoded::from_str(url.query().unwrap()).context("Invalid query parameters")?;
 
         let request_jwt = self
             .client
-            .get(redirect_url.request_uri)
+            .get(request_uri.request_uri)
             .send()
             .await?
             .error_for_status()?
             .text()
             .await?;
-        let verifier_jwk = get_jwk(request_jwt.clone()).await?;
+        let verifier_jwk = if let Ok(jwk) = get_jwk(request_jwt.clone()).await {
+            jwk
+        } else {
+            let (_, payload, _) = split_jws(&request_jwt)?;
+            let ERPK { ephemeral_reader_public_key } = serde_json::from_slice(
+                &base64::decode_config(
+                    &payload,
+                    base64::URL_SAFE,
+                )?
+            )?;
+            let key: isomdl::definitions::CoseKey = serde_cbor::from_slice(
+                &base64::decode_config(
+                    ephemeral_reader_public_key,
+                    base64::URL_SAFE,
+                    )?
+                )?;
+            key.try_into()?
+        };
         let request_object: Request =
-            jwt::decode_verify(&request_jwt, &verifier_jwk).context("Could not decode JWT")?;
+            jwt::decode_unverified(&request_jwt).context("Could not decode JWT")?;
 
         let mdoc_documents: Documents =
             serde_cbor::from_slice(include_bytes!("../mdoc_documents"))?;
@@ -193,11 +217,6 @@ impl Wallet {
         let der_bytes = base64::decode(der).unwrap();
         let device_key: p256::ecdsa::SigningKey =
             p256::SecretKey::from_sec1_der(&der_bytes).unwrap().into();
-        println!(
-            "{:?} {:?}",
-            device_key.verifying_key().to_encoded_point(false).x(),
-            device_key.verifying_key().to_encoded_point(false).y()
-        );
         let did = DIDJWK.generate(&Source::Key(&jwk)).unwrap();
         let kid = DIDJWK
             .resolve(&did, &ResolutionInputMetadata::default())
@@ -218,36 +237,7 @@ impl Wallet {
             .map(|docs| base64::encode_config(&docs, base64::URL_SAFE_NO_PAD))
             .unwrap();
 
-        let id_token = match &request_object.request_parameters.response_type {
-            CoreResponseType::IdToken => Some(IdToken::new(
-                IdTokenClaims::new(
-                    IssuerUrl::from_url(
-                        Url::parse(&format!("https://self-issued.me/v2/{}", SCHEME)).unwrap(),
-                    ),
-                    vec![Audience::new(
-                        request_object.request_parameters.client_id.to_string(),
-                    )],
-                    Utc::now() + Duration::seconds(300),
-                    Utc::now(),
-                    StandardClaims::new(SubjectIdentifier::new(kid)),
-                    IdTokenAdditionalClaims {
-                        sub_jwk: None,
-                        vp_token: None,
-                    },
-                )
-                .set_nonce(Some(request_object.request_parameters.nonce.clone())),
-                PrivateWebKey::new(&jwk),
-                SigningAlgorithm(jwk.get_algorithm().unwrap()),
-            )?),
-            CoreResponseType::Extension(e) => match e.as_str() {
-                "vp_token" => None,
-                t => return Err(anyhow!("Unsupported response_type: {}", t)),
-            },
-            _ => return Err(anyhow!("Unsupported response_type")),
-        };
-
         let response_request = ResponseRequestJWT {
-            id_token,
             vp_token: _documents,
             state: request_object.state.clone(),
         };
