@@ -18,7 +18,7 @@ serde = { version = "1.0.147", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 serde_with = "2.1.0"
 siop = { git = "https://github.com/spruceid/siop-rs" }
-ssi = { version = "0.5" , default-features = false, features = ["w3c"] }
+ssi = { version = "0.6" , default-features = false, features = ["w3c"] }
 did-ion = { version = "0.2" }
 did-web = { version = "0.2", default-features = false }
 did-jwk = { version = "0.1" }
