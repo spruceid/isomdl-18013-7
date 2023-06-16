@@ -1,6 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use oidc4vp::{utils::Error, jar::RequestObject};
+use oidc4vp::{utils::Error, mdl_request::RequestObject};
 use oidc4vp::presentation_exchange::DescriptorMap;
 use oidc4vp::presentation_exchange::PresentationSubmission;
 use isomdl;

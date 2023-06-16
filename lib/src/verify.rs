@@ -1,7 +1,7 @@
 use oidc4vp::presentment::Verify;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use oidc4vp::{utils::Error, jar::RequestObject};
+use oidc4vp::{utils::Error, mdl_request::RequestObject};
 use oidc4vp::{
     presentation_exchange::{
         Constraints, ConstraintsField, InputDescriptor,
