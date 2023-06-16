@@ -10,8 +10,8 @@ documentation = "https://docs.rs/isomdl-18013-7/"
 
 [dependencies]
 anyhow = "1.0.66"
-oidc4vp = { git = "https://github.com/spruceid/oidc4vp-rs.git", rev="82d179d"}
-isomdl = { git = "ssh://git@github.com/spruceid/isomdl.git", rev = "fce4e07"}
+oidc4vp = { git = "https://github.com/spruceid/oidc4vp-rs.git", rev="2337834"}
+isomdl = { git = "ssh://git@github.com/spruceid/isomdl.git", rev = "8f87768"}
 openidconnect = { git = "https://github.com/ramosbugs/openidconnect-rs", branch = "main" }
 reqwest = { version = "0.11.13", default-features = false }
 serde = { version = "1.0.147", features = ["derive"] }
