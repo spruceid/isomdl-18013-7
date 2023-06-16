@@ -5,7 +5,8 @@ use isomdl::presentation::device::{
     oid4vp::SessionManager, DeviceSession, Documents, PermittedItems, RequestedItems,
 };
 use oidc4vp::presentation_exchange::VpToken;
-use p256::ecdsa::signature::{Signature, Signer};
+use p256::ecdsa::signature::{Signer};
+use p256::ecdsa::Signature;
 use serde::{Deserialize, Serialize};
 use serde_with::EnumMap;
 use siop::{
@@ -28,6 +29,8 @@ use uuid::Uuid;
 
 pub use isomdl;
 pub use ssi;
+pub mod verify;
+pub mod present;
 
 const SCHEME: &str = "mdl-openid4vp";
 
@@ -211,8 +214,8 @@ impl Wallet {
 
         let mut prepared_response = manager.prepare_response(requested_items, permitted_items);
         while let Some((_, payload)) = prepared_response.get_next_signature_payload() {
-            let signature = device_key.sign(payload);
-            prepared_response.submit_next_signature(signature.as_bytes().to_vec());
+            let signature: Signature = device_key.sign(payload);
+            prepared_response.submit_next_signature(signature.to_bytes().to_vec());
         }
         let _documents: String = serde_cbor::to_vec(&prepared_response.finalize_oid4vp_response())
             .map(|docs| base64::encode_config(&docs, base64::URL_SAFE_NO_PAD))
