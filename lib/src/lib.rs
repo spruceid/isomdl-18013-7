@@ -137,7 +137,6 @@ impl Wallet {
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::builder()
-                .connection_verbose(true)
                 .build()
                 .unwrap(),
         }
