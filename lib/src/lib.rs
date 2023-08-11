@@ -29,11 +29,11 @@ use uuid::Uuid;
 
 pub use isomdl;
 pub use ssi;
-pub mod present;
-pub mod verify;
-pub mod utils;
-pub mod x509;
 pub mod de;
+pub mod present;
+pub mod utils;
+pub mod verify;
+pub mod x509;
 
 const SCHEME: &str = "mdl-openid4vp";
 
@@ -218,7 +218,7 @@ impl Wallet {
             prepared_response.submit_next_signature(signature.to_bytes().to_vec());
         }
         let _documents: String = serde_cbor::to_vec(&prepared_response.finalize_oid4vp_response())
-            .map(|docs| base64::encode_config(&docs, base64::URL_SAFE_NO_PAD))
+            .map(|docs| base64::encode_config(docs, base64::URL_SAFE_NO_PAD))
             .unwrap();
 
         let id_token = match &request_object.request_parameters.response_type {

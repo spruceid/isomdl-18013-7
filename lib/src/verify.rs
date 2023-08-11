@@ -4,9 +4,10 @@ use isomdl::definitions::helpers::non_empty_map::NonEmptyMap;
 use isomdl::definitions::oid4vp::DeviceResponse;
 use isomdl::presentation::reader::Error as IsomdlError;
 use oidc4vp::mdl_request::ClientMetadata;
+use oidc4vp::mdl_request::RequestObject;
 use oidc4vp::mdl_request::{MetaData, PresDef};
 use oidc4vp::presentment::Verify;
-use oidc4vp::mdl_request::RequestObject;
+use oidc4vp::utils::Openid4vpError;
 use oidc4vp::{
     presentation_exchange::{
         Constraints, ConstraintsField, InputDescriptor, PresentationDefinition,
@@ -17,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_cbor::Value as CborValue;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use oidc4vp::utils::Openid4vpError;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnattendedSessionManager {
@@ -96,12 +96,14 @@ impl Verify for UnattendedSessionManager {
         Ok(RequestObject {
             aud: "https://self-issued.me/v2".to_string(), // per openid4vp chapter 5.6
             response_type: "vp_token".to_string(),
-            client_id: client_id.clone(),
+            client_id,
             client_id_scheme: Some("x509_san_uri".to_string()),
             response_uri: Some(response_uri),
             scope: None,
             state: None,
-            presentation_definition: PresDef::PresentationDefinition { presentation_definition: presentation_definition },
+            presentation_definition: PresDef::PresentationDefinition {
+                presentation_definition,
+            },
             client_metadata: MetaData::ClientMetadata { client_metadata },
             response_mode: Some(response_mode),
             nonce: Some(e_reader_key_bytes),
@@ -154,7 +156,7 @@ fn mdl_presentation_definition(
     let input_descriptors = build_input_descriptors(namespaces);
     Ok(PresentationDefinition {
         id: presentation_id,
-        input_descriptors: input_descriptors,
+        input_descriptors,
         name: None,
         purpose: None,
         format: None,
@@ -170,7 +172,6 @@ fn build_input_descriptors(
     let input_descriptors: Vec<InputDescriptor> = namespaces
         .iter()
         .map(|namespace| {
-
             let format = json!({
             "mso_mdoc": {
                 "alg": [
@@ -203,7 +204,9 @@ fn build_input_descriptors(
 
             let constraints = Constraints {
                 fields: Some(fields),
-                limit_disclosure: Some(oidc4vp::presentation_exchange::ConstraintsLimitDisclosure::Required),
+                limit_disclosure: Some(
+                    oidc4vp::presentation_exchange::ConstraintsLimitDisclosure::Required,
+                ),
             };
 
             InputDescriptor {
