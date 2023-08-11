@@ -1,47 +1,41 @@
-use oidc4vp::presentment::Verify;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use oidc4vp::{utils::Error, mdl_request::RequestObject};
+use isomdl;
+use isomdl::definitions::helpers::non_empty_map::NonEmptyMap;
+use isomdl::definitions::oid4vp::DeviceResponse;
+use isomdl::presentation::reader::Error as IsomdlError;
+use oidc4vp::mdl_request::ClientMetadata;
+use oidc4vp::mdl_request::{MetaData, PresDef};
+use oidc4vp::presentment::Verify;
+use oidc4vp::mdl_request::RequestObject;
 use oidc4vp::{
     presentation_exchange::{
-        Constraints, ConstraintsField, InputDescriptor,
-        PresentationDefinition,
+        Constraints, ConstraintsField, InputDescriptor, PresentationDefinition,
     },
     utils::NonEmptyVec,
 };
-use serde_json::{json, Value};
-use isomdl::definitions::helpers::NonEmptyMap;
-use std::collections::BTreeMap;
-use oidc4vp::mdl_request::ClientMetadata;
-use isomdl;
-use isomdl::definitions::oid4vp::DeviceResponse;
-use isomdl::presentation::reader::Error as IsomdlError;
-use crate::isomdl::presentation::reader::ReaderSession;
+use serde::{Deserialize, Serialize};
 use serde_cbor::Value as CborValue;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use oidc4vp::utils::Openid4vpError;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnattendedSessionManager {
-    pub device_response: DeviceResponse,
+    pub epk: Vec<u8>,
+    pub esk: Vec<u8>,
 }
 
 impl UnattendedSessionManager {
-    pub fn new(device_response: DeviceResponse) -> Result<Self> {
-        Ok(UnattendedSessionManager {device_response})
+    pub fn new(epk: Vec<u8>, esk: Vec<u8>) -> Result<Self> {
+        Ok(UnattendedSessionManager { epk, esk })
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UnattendedSessionManagerInit {
-}
-
-impl UnattendedSessionManagerInit {
-    pub fn new() -> Result<Self> {
-        Ok(UnattendedSessionManagerInit{})
-    }
-}
-
-impl ReaderSession for UnattendedSessionManager {
-    fn handle_response(&mut self) -> Result<BTreeMap<String, Value>, IsomdlError> {
+pub trait ReaderSession {
+    fn handle_response(
+        &mut self,
+        device_response: DeviceResponse,
+    ) -> Result<BTreeMap<String, Value>, IsomdlError> {
         // TODO: Mdoc authentication.
         //
         // 1. As part of mdoc response, mdl produces `DeviceAuth`, which is either a `DeviceSignature` or
@@ -56,7 +50,7 @@ impl ReaderSession for UnattendedSessionManager {
         // 4. The reader must verify that the `DeviceKey` is the subject of the x5chain, and that the
         //    x5chain is consistent and issued by a trusted source.
         let mut parsed_response = BTreeMap::<String, serde_json::Value>::new();
-        let response = self.device_response.clone();
+        let response = device_response;
         response
             .documents
             .ok_or(IsomdlError::DeviceTransmissionError)?
@@ -80,28 +74,37 @@ impl ReaderSession for UnattendedSessionManager {
                 }
             });
         Ok(parsed_response)
-}
+    }
 }
 
-impl Verify for UnattendedSessionManagerInit {
-    fn mdl_request(&self, requested_fields: NonEmptyMap< String, NonEmptyMap<Option<String>, Option<bool>>> , client_id: String, redirect_uri: String, presentation_id: String, response_mode: String, client_metadata: ClientMetadata) -> Result<RequestObject, Error>{
-        let presentation_definition = mdl_presentation_definition(requested_fields, presentation_id)?;
-    
-        Ok(RequestObject{
-            aud: "https://self-issued.me/v2".to_string(),  // per openid4vp chapter 5.6
+impl ReaderSession for UnattendedSessionManager {}
+
+impl Verify for UnattendedSessionManager {
+    fn mdl_request(
+        &self,
+        requested_fields: NonEmptyMap<String, NonEmptyMap<Option<String>, Option<bool>>>,
+        client_id: String,
+        response_uri: String,
+        presentation_id: String,
+        response_mode: String,
+        client_metadata: ClientMetadata,
+        e_reader_key_bytes: String,
+    ) -> Result<RequestObject, Openid4vpError> {
+        let presentation_definition =
+            mdl_presentation_definition(requested_fields, presentation_id)?;
+
+        Ok(RequestObject {
+            aud: "https://self-issued.me/v2".to_string(), // per openid4vp chapter 5.6
             response_type: "vp_token".to_string(),
             client_id: client_id.clone(),
-            client_id_scheme: Some("ISO_X509".to_string()),
-            redirect_uri: Some(redirect_uri),
-            scope: Some("openid".to_string()), // I think it could also be None
-            state:"".to_string(), 
-            presentation_definition: Some(presentation_definition),
-            presentation_definition_uri: None,
-            client_metadata,
-            client_metadata_uri: None,
+            client_id_scheme: Some("x509_san_uri".to_string()),
+            response_uri: Some(response_uri),
+            scope: None,
+            state: None,
+            presentation_definition: PresDef::PresentationDefinition { presentation_definition: presentation_definition },
+            client_metadata: MetaData::ClientMetadata { client_metadata },
             response_mode: Some(response_mode),
-            nonce: Some(client_id),
-            supported_algorithm: "ES256".to_string()
+            nonce: Some(e_reader_key_bytes),
         })
     }
 }
@@ -145,11 +148,11 @@ fn parse_response(value: CborValue) -> Result<Value, IsomdlError> {
 }
 
 fn mdl_presentation_definition(
-    namespaces: NonEmptyMap< String, NonEmptyMap<Option<String>, Option<bool>>>,
-    presentation_id: String
-) -> Result<PresentationDefinition, Error> {
+    namespaces: NonEmptyMap<String, NonEmptyMap<Option<String>, Option<bool>>>,
+    presentation_id: String,
+) -> Result<PresentationDefinition, Openid4vpError> {
     let input_descriptors = build_input_descriptors(namespaces);
-    Ok(PresentationDefinition{
+    Ok(PresentationDefinition {
         id: presentation_id,
         input_descriptors: input_descriptors,
         name: None,
@@ -158,76 +161,61 @@ fn mdl_presentation_definition(
     })
 }
 
-fn build_input_descriptors(namespaces: NonEmptyMap< String, NonEmptyMap<Option<String>, Option<bool>>>) -> Vec<InputDescriptor>{
-    let path_base = "$.mdoc.";
+//TODO: allow for specifying the algorithm
+fn build_input_descriptors(
+    namespaces: NonEmptyMap<String, NonEmptyMap<Option<String>, Option<bool>>>,
+) -> Vec<InputDescriptor> {
+    let path_base = "$['org.iso.18013.5.1']";
 
-    let doc_type_filter = json!({
-            "type": "string",
-            "const": "org.iso.18013.5.1.mDL"
-        });
+    let input_descriptors: Vec<InputDescriptor> = namespaces
+        .iter()
+        .map(|namespace| {
 
-    let input_descriptors: Vec<InputDescriptor> = namespaces.iter().map(|namespace| {
-        let namespace_filter = json!({
-            "type": "string",
-            "const": namespace.0
-        });
-
-        let format = json!({
+            let format = json!({
             "mso_mdoc": {
                 "alg": [
-                    "EdDSA",
                     "ES256"
-                    //TODO add all supported algorithms
+                    //TODO: add all supported algorithms
                 ]
             }});
-        let namespace_fields = namespace.1.to_owned();
-        let mut fields: Vec<ConstraintsField> =  namespace_fields.iter().map(|field| {
-            ConstraintsField { 
-                path: NonEmptyVec::new(format!("{}{}", path_base, field.0.as_ref().unwrap().to_owned())),
-                 id: None,
-                 purpose:None,
-                 name:None,
-                filter: None,
-                optional: None,
-                intent_to_retain: *field.1 
-            
+            let mut namespace_fields = BTreeMap::from(namespace.1.to_owned());
+            namespace_fields.retain(|k, _v| k.is_some());
+
+            let fields: Vec<ConstraintsField> = namespace_fields
+                .iter()
+                .map(|field| {
+                    ConstraintsField {
+                        //safe unwrap since none values are removed above
+                        path: NonEmptyVec::new(format!(
+                            "{}['{}']",
+                            path_base,
+                            field.0.as_ref().unwrap().to_owned()
+                        )),
+                        id: None,
+                        purpose: None,
+                        name: None,
+                        filter: None,
+                        optional: None,
+                        intent_to_retain: *field.1,
+                    }
+                })
+                .collect();
+
+            let constraints = Constraints {
+                fields: Some(fields),
+                limit_disclosure: Some(oidc4vp::presentation_exchange::ConstraintsLimitDisclosure::Required),
+            };
+
+            InputDescriptor {
+                id: "org.iso.18013.5.1.mDL ".to_string(),
+                name: None,
+                purpose: None,
+                format: Some(format),
+                constraints: Some(constraints),
+                schema: None,
             }
-        }).collect();
-
-        fields.push(ConstraintsField {
-            path: NonEmptyVec::new(format!("{}{}", path_base, "doc_type")),
-            id: None,
-            purpose: None,
-            name: None,
-            filter: Some(doc_type_filter.clone()),
-            optional: None,
-            intent_to_retain: None,
-        });
-    
-        fields.push(ConstraintsField {
-            path: NonEmptyVec::new(format!("{}{}", path_base, "namespace")),
-            id: None,
-            purpose: None,
-            name: None,
-            filter: Some(namespace_filter),
-            optional: None,
-            intent_to_retain: None,
-        });
-
-        let constraints = Constraints{
-            fields: Some(fields),
-            limit_disclosure: None,
-        };
-
-        InputDescriptor{ 
-            id: "mDL".to_string(),
-            name: None,
-            purpose: None,
-            format: Some(format),
-            constraints: Some(constraints),
-            schema: None }
-    }).collect();
+        })
+        .collect();
 
     input_descriptors
-
 }

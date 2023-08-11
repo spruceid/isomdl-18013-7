@@ -5,7 +5,7 @@ use isomdl::presentation::device::{
     oid4vp::SessionManager, DeviceSession, Documents, PermittedItems, RequestedItems,
 };
 use oidc4vp::presentation_exchange::VpToken;
-use p256::ecdsa::signature::{Signer};
+use p256::ecdsa::signature::Signer;
 use p256::ecdsa::Signature;
 use serde::{Deserialize, Serialize};
 use serde_with::EnumMap;
@@ -29,8 +29,11 @@ use uuid::Uuid;
 
 pub use isomdl;
 pub use ssi;
-pub mod verify;
 pub mod present;
+pub mod verify;
+pub mod utils;
+pub mod x509;
+pub mod de;
 
 const SCHEME: &str = "mdl-openid4vp";
 
@@ -136,9 +139,7 @@ async fn get_jwk(jwt: String) -> Result<JWK> {
 impl Wallet {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .build()
-                .unwrap(),
+            client: reqwest::Client::builder().build().unwrap(),
         }
     }
 

@@ -10,13 +10,15 @@ documentation = "https://docs.rs/isomdl-18013-7/"
 
 [dependencies]
 anyhow = "1.0.66"
-oidc4vp = { git = "https://github.com/spruceid/oidc4vp-rs.git", rev="2337834"}
-isomdl = { git = "ssh://git@github.com/spruceid/isomdl.git", rev = "8f87768"}
+oidc4vp = { git = "https://github.com/spruceid/oidc4vp-rs.git", rev="ca3f112"}
+# oidc4vp = { path = "../../oidc4vp-rs"}
+isomdl = { git = "ssh://git@github.com/spruceid/isomdl.git", rev = "b2324b7"}
+# isomdl = {path = "../../isomdl"}
 openidconnect = { git = "https://github.com/ramosbugs/openidconnect-rs", branch = "main" }
 reqwest = { version = "0.11.13", default-features = false }
 serde = { version = "1.0.147", features = ["derive"] }
 serde_urlencoded = "0.7.1"
-serde_with = "2.1.0"
+serde_with = { version = "2.1.0", features = ["json"] }
 siop = { git = "https://github.com/spruceid/siop-rs" }
 ssi = { version = "0.6" , default-features = false, features = ["w3c"] }
 did-ion = { version = "0.2" }
@@ -31,3 +33,18 @@ serde_cbor = "0.11.2"
 base64 = "0.13.1"
 p256 = "0.13.2"
 signature = "2.1.0"
+async-trait = "0.1.72"
+josekit = "0.8.3"
+rand = "0.8.5"
+base64url = "0.1.0"
+openssl = "0.10.53"
+x509-cert = "0.2.4"
+x509-certificate = "0.19.0"
+elliptic-curve = "0.13.5"
+const-oid = "0.9.5"
+rsa = "0.9.2"
+serde_bytes = "0.11.9"
+
+[dependencies.cose-rs]
+git = "ssh://git@github.com/spruceid/cose-rs.git"
+rev = "4104505"
