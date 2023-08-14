@@ -18,15 +18,16 @@ use serde::{Deserialize, Serialize};
 use serde_cbor::Value as CborValue;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use josekit::jwk::Jwk;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnattendedSessionManager {
-    pub epk: Vec<u8>,
-    pub esk: Vec<u8>,
+    pub epk: Jwk,
+    pub esk: Jwk,
 }
 
 impl UnattendedSessionManager {
-    pub fn new(epk: Vec<u8>, esk: Vec<u8>) -> Result<Self> {
+    pub fn new(epk: Jwk, esk: Jwk) -> Result<Self> {
         Ok(UnattendedSessionManager { epk, esk })
     }
 }
@@ -221,4 +222,23 @@ fn build_input_descriptors(
         .collect();
 
     input_descriptors
+}
+
+pub fn decrypted_authorization_response(response: String, state: UnattendedSessionManager) -> Result<Vec<u8>, Openid4vpError>{
+    let decrypter = josekit::jwe::ECDH_ES.decrypter_from_jwk(&state.esk)?;
+    let (payload, _header) = josekit::jwt::decode_with_decrypter(&response, &decrypter)?;
+    let vp_token = payload.claim("vp_token");
+    if let Some(token) = vp_token {
+        match token {
+            Value::String(s) => {
+                let result = base64url::decode(s).unwrap();
+                return Ok(result)
+            },
+            _ => {
+                return Err(Openid4vpError::UnrecognizedField)
+            }
+        }
+    } else {
+        Err(Openid4vpError::Empty)
+    }
 }
