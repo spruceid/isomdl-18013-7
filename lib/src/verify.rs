@@ -226,16 +226,16 @@ fn build_input_descriptors(
 
 pub fn decrypted_authorization_response(response: String, state: UnattendedSessionManager) -> Result<Vec<u8>, Openid4vpError>{
     let decrypter = josekit::jwe::ECDH_ES.decrypter_from_jwk(&state.esk)?;
-    let (payload, _header) = josekit::jwt::decode_with_decrypter(&response, &decrypter)?;
+    let (payload, _header) = josekit::jwt::decode_with_decrypter(response, &decrypter)?;
     let vp_token = payload.claim("vp_token");
     if let Some(token) = vp_token {
         match token {
             Value::String(s) => {
                 let result = base64url::decode(s).unwrap();
-                return Ok(result)
+                Ok(result)
             },
             _ => {
-                return Err(Openid4vpError::UnrecognizedField)
+                Err(Openid4vpError::UnrecognizedField)
             }
         }
     } else {

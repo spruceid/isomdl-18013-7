@@ -36,8 +36,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use x509_cert::der::Decode;
 
-use crate::x509::X509;
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
     pub request_object: RequestObject,
@@ -344,23 +342,24 @@ fn _validate_mdl_request(jwt: String) -> Result<RequestObject, Openid4vpError> {
     let client_id_scheme = request.client_id_scheme;
 
     if let Some(x5chain) = x509_chain {
-        let (leaf, intermediary) = x5chain.split_at(1);
+        let (leaf, _intermediary) = x5chain.split_at(1);
         if let Some(cert) = leaf.first() {
             let x509_bytes = base64::decode(cert).unwrap();
+            //TODO: VALIDATE CHAIN WITHOUT USING OPENSSL CRATE
             //let x509_certificate = x509_certificate::X509Certificate::from_der(x509_bytes).unwrap();
-            let leaf_cert: X509 = X509(openssl::x509::X509::from_der(&x509_bytes)?);
-            let intermediary_certs: Vec<X509> = intermediary
-                .iter()
-                .map(|item| {
-                    let bytes = base64::decode(item).unwrap();
-                    X509(openssl::x509::X509::from_der(&bytes).unwrap())
-                })
-                .collect();
+            // let leaf_cert: X509 = X509(openssl::x509::X509::from_der(&x509_bytes)?);
+            // let intermediary_certs: Vec<X509> = intermediary
+            //     .iter()
+            //     .map(|item| {
+            //         let bytes = base64::decode(item).unwrap();
+            //         X509(openssl::x509::X509::from_der(&bytes).unwrap())
+            //     })
+            //     .collect();
 
-            let _chain = crate::x509::X5Chain {
-                leaf: leaf_cert,
-                intermediate: intermediary_certs,
-            };
+            // let _chain = crate::x509::X5Chain {
+            //     leaf: leaf_cert,
+            //     intermediate: intermediary_certs,
+            // };
             //TODO: look up trusted root and verify against that root
             //let verified = chain.verify(root);
 
