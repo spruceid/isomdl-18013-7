@@ -36,8 +36,11 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use x509_cert::der::Decode;
 
+use crate::utils::gen_nonce;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
+    pub mdoc_nonce: String,
     pub request_object: RequestObject,
     pub verifier_epk: Jwk,
     pub mdoc_epk: Jwk,
@@ -46,12 +49,14 @@ pub struct State {
 
 impl State {
     pub fn new(
+        mdoc_nonce: String,
         request_object: RequestObject,
         verifier_epk: Jwk,
         mdoc_epk: Jwk,
         mdoc_esk: Jwk,
     ) -> Result<Self> {
         Ok(State {
+            mdoc_nonce,
             request_object,
             verifier_epk,
             mdoc_epk,
@@ -92,7 +97,7 @@ pub struct UnattendedDeviceAuthentication(
 
 impl UnattendedDeviceAuthentication {
     pub fn new(
-        transcript: UnattendedSessionTranscript,
+        transcript: Vec<u8>,
         doc_type: String,
         namespaces_bytes: DeviceNamespacesBytes,
     ) -> Self {
@@ -106,20 +111,26 @@ impl UnattendedDeviceAuthentication {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UnattendedSessionTranscript(
-    pub Option<Vec<u8>>,
-    pub Option<Vec<u8>>,
-    pub OID4VPHandover,
-);
+pub struct UnattendedSessionTranscript(pub OID4VPHandover);
+
+impl UnattendedSessionTranscript {
+    fn to_cbor(&self) -> Result<Vec<u8>, Openid4vpError> {
+        let mut cbor = serde_cbor::to_vec(&self.0)?;
+        let element: u8 = 22; // 22 is cbor for Null
+        cbor.insert(0, element);
+        cbor.insert(0, element);
+        Ok(cbor)
+    }
+}
 
 impl DeviceSession for UnattendedSessionManager {
-    type T = UnattendedSessionTranscript;
+    type T = Vec<u8>;
     fn documents(&self) -> &Documents {
         &self.documents
     }
 
     fn session_transcript(&self) -> Self::T {
-        self.session_transcript.clone()
+        self.session_transcript.to_cbor().unwrap()
     }
 
     fn prepare_response(
@@ -309,10 +320,7 @@ impl Present for UnattendedSessionManager {
         let input_descriptors = pres_def.input_descriptors;
         let items_request: Vec<ItemsRequest> = input_descriptors
             .iter()
-            .map(|input_descriptors| {
-                
-                ItemsRequest::try_from(input_descriptors.clone()).unwrap()
-            })
+            .map(|input_descriptors| ItemsRequest::try_from(input_descriptors.clone()).unwrap())
             .collect();
         let permitted_items: PermittedItems = items_request
             .clone()
@@ -403,17 +411,25 @@ async fn _retrieve_mdl_request(request_uri: String) -> Result<State, Openid4vpEr
     //decode and verify the jwt, validate x509 chain
     let request_object = _validate_mdl_request(jwt)?;
 
+    let mdoc_nonce = gen_nonce();
+
     match request_object.client_metadata.clone() {
-        MetaData::ClientMetadata { client_metadata } => {
-            Ok(initialise_session(request_object, client_metadata)?)
-        }
+        MetaData::ClientMetadata { client_metadata } => Ok(initialise_session(
+            mdoc_nonce,
+            request_object,
+            client_metadata,
+        )?),
         //Note: using client_metadata_uri is not an option in the latest version of 18013-7 anymore
         MetaData::ClientMetadataUri {
             client_metadata_uri,
         } => {
             let client_metadata: ClientMetadata =
                 reqwest::get(client_metadata_uri).await?.json().await?;
-            Ok(initialise_session(request_object, client_metadata)?)
+            Ok(initialise_session(
+                mdoc_nonce,
+                request_object,
+                client_metadata,
+            )?)
         }
     }
 }
@@ -438,7 +454,7 @@ pub async fn prepare_openid4vp_mdl_response(
             response_uri.unwrap(),
             nonce.unwrap(),
         );
-        let session_transcript = UnattendedSessionTranscript(None, None, handover);
+        let session_transcript = UnattendedSessionTranscript(handover);
         //tag 24 the session transcript
         let unattended_session_manager =
             UnattendedSessionManager::new(session_transcript, documents)?;
@@ -481,15 +497,15 @@ fn encrypted_authorization_response(
     state: State,
 ) -> Result<String, Openid4vpError> {
     let descriptor_map = DescriptorMap {
-        id: "mDL".to_string(),
+        id: "org.iso.18013.5.1.mDL".to_string(),
         format: "mso_mdoc".to_string(), //TODO: fix
         path: "$".to_string(),
         path_nested: None,
     };
 
     let presentation_submission = PresentationSubmission {
-        id: "mDL-req".to_string(),
-        definition_id: "mDL-res".to_string(),
+        id: "spruceid-mDL-req".to_string(),
+        definition_id: "spruceid-mDL-res".to_string(),
         descriptor_map: vec![descriptor_map],
     };
 
@@ -508,10 +524,7 @@ fn encrypted_authorization_response(
         )
         .unwrap();
     jwe_header
-        .set_claim(
-            "apu",
-            Some(serde_json::Value::String("SKDevice".to_string())),
-        )
+        .set_claim("apu", Some(serde_json::Value::String(state.mdoc_nonce)))
         .unwrap(); //mdocGeneratedNonce
     jwe_header
         .set_claim(
@@ -543,6 +556,7 @@ fn encrypted_authorization_response(
 }
 
 pub fn initialise_session(
+    mdoc_nonce: String,
     request_object: RequestObject,
     client_metadata: ClientMetadata,
 ) -> Result<State, Openid4vpError> {
@@ -584,6 +598,7 @@ pub fn initialise_session(
                                 .generate_ec_key_pair(josekit::jwk::alg::ec::EcCurve::P256)
                                 .unwrap();
                             let sm = State::new(
+                                mdoc_nonce,
                                 request_object,
                                 sk_reader,
                                 cek_pair.to_jwk_public_key(),
@@ -604,9 +619,52 @@ pub fn initialise_session(
     }
 }
 
-#[cfg(test)]
-mod test {
+// #[cfg(test)]
+// mod test {
+//     use super::*;
 
-    #[test]
-    fn prepare_response_test() {}
-}
+//     #[test]
+//     fn prepare_response_test() {
+//         let mut rng = rand::rngs::OsRng {};
+//         let secret_key = p256::SecretKey::random(&mut rng);
+//         let ass = secret_key.to_bytes().as_slice();
+
+//         let sk_bytes: Vec<u8> = zeroize::Zeroizing::new(secret_key.to_bytes().to_vec()).to_vec();
+//         let public_key: p256::PublicKey = secret_key.public_key();
+
+//         let ssi_private_key = ssi::jwk::JWK::generate_p256().unwrap();
+//         let ssi_public_key = ssi_private_key.to_public().clone();
+
+//         let secret = match ssi_private_key.params {
+//             Params::EC(ec) => {
+//                 Some(ec.ecc_private_key.clone().unwrap())
+//             }
+//             _ => {
+//                 None
+//             }
+//         };
+
+//         let payload = json!({
+//             "apv": "SKReader",
+//             "apu": "mdocGeneratedNonce", // fill in
+//             "epk": "pubkey",
+//             "vp_token": "token",
+//             "presentation_submission": "presentation_submission",
+//         });
+
+//         // Encode the payload into a JWE
+//         let header = Header::new(Algorithm::ES256);
+//         let encoding_key = EncodingKey::from_ec_der(&der);
+//         //let encoding_key = EncodingKey::from_base64_secret(&ssi_public_key.public_key_use.unwrap()).unwrap();
+//         let jwe_token = encode(&header, &payload, &encoding_key).unwrap();
+
+//         println!("jwe: {:?}", jwe_token);
+
+//         let decoding_key = DecodingKey::from_ec_pem(&secret.unwrap().0).expect("Failed to create decoding key");
+//         let validation = Validation::new(Algorithm::ES256); // Match the encryption algorithm used
+//         let token_data = decode::<Value>(&jwe_token, &decoding_key, &validation).expect("Failed to decode token");
+
+//         println!("token_data {:?}", token_data);
+
+//     }
+// }
