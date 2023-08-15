@@ -18,6 +18,7 @@ use isomdl::presentation::device::PermittedItems;
 use isomdl::presentation::device::PreparedDeviceResponse;
 use isomdl::presentation::device::PreparedDocument;
 use isomdl::presentation::device::RequestedItems;
+use josekit::jwe::alg::ecdh_es::EcdhEsJweEncrypter;
 use josekit::jwk::Jwk;
 use oidc4vp::mdl_request::ClientMetadata;
 use oidc4vp::mdl_request::MetaData;
@@ -26,6 +27,7 @@ use oidc4vp::presentation_exchange::DescriptorMap;
 use oidc4vp::presentation_exchange::{PresentationDefinition, PresentationSubmission};
 use oidc4vp::presentment::Present;
 use oidc4vp::{mdl_request::RequestObject, utils::Openid4vpError};
+use p256::NistP256;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -547,7 +549,7 @@ fn encrypted_authorization_response(
             .set_claim("state", Some(serde_json::Value::String(state)))
             .unwrap();
     }
-    let encrypter = josekit::jwe::ECDH_ES
+    let encrypter: EcdhEsJweEncrypter<NistP256> = josekit::jwe::ECDH_ES
         .encrypter_from_jwk(&state.verifier_epk)
         .unwrap();
     let jwe = josekit::jwt::encode_with_encrypter(&jwe_payload, &jwe_header, &encrypter).unwrap();
@@ -595,7 +597,7 @@ pub fn initialise_session(
                             let sk_reader = josekit::jwk::Jwk::from_map(k.clone()).unwrap(); //todo: fix unwrap
                                                                                              //todo: dynamic curve selection
                             let cek_pair = josekit::jwe::ECDH_ES
-                                .generate_ec_key_pair(josekit::jwk::alg::ec::EcCurve::P256)
+                                .generate_ec_key_pair::<p256::NistP256>()
                                 .unwrap();
                             let sm = State::new(
                                 mdoc_nonce,

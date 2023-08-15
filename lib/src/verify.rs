@@ -3,6 +3,7 @@ use isomdl;
 use isomdl::definitions::helpers::non_empty_map::NonEmptyMap;
 use isomdl::definitions::oid4vp::DeviceResponse;
 use isomdl::presentation::reader::Error as IsomdlError;
+use josekit::jwe::alg::ecdh_es::EcdhEsJweDecrypter;
 use josekit::jwk::Jwk;
 use oidc4vp::mdl_request::ClientMetadata;
 use oidc4vp::mdl_request::RequestObject;
@@ -15,6 +16,7 @@ use oidc4vp::{
     },
     utils::NonEmptyVec,
 };
+use p256::NistP256;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value as CborValue;
 use serde_json::{json, Value};
@@ -228,13 +230,14 @@ pub fn decrypted_authorization_response(
     response: String,
     state: UnattendedSessionManager,
 ) -> Result<Vec<u8>, Openid4vpError> {
-    let decrypter = josekit::jwe::ECDH_ES.decrypter_from_jwk(&state.esk)?;
+    let decrypter: EcdhEsJweDecrypter<NistP256> =
+        josekit::jwe::ECDH_ES.decrypter_from_jwk(&state.esk)?;
     let (payload, _header) = josekit::jwt::decode_with_decrypter(response, &decrypter)?;
     let vp_token = payload.claim("vp_token");
     if let Some(token) = vp_token {
         match token {
             Value::String(s) => {
-                let result = base64url::decode(s).unwrap();
+                let result = base64url::decode(&s).unwrap();
                 Ok(result)
             }
             _ => Err(Openid4vpError::UnrecognizedField),
