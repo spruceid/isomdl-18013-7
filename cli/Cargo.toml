@@ -13,7 +13,7 @@ clap = { version = "4.0.26", features = ["derive"] }
 serde = { version = "1.0.147", features = ["derive"] }
 url = { version = "2.3.1", features = ["serde"] }
 
-isomdl-18013-7 = { path = "../lib" }
+isomdl180137 = { path = "../lib" }
 tokio = { version = "1.22.0", features = ["macros", "rt"] }
 tracing-subscriber = "0.3.16"
 console = "0.15.2"

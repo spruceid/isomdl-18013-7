@@ -29,11 +29,8 @@ use uuid::Uuid;
 
 pub use isomdl;
 pub use ssi;
-pub mod de;
 pub mod present;
-pub mod utils;
 pub mod verify;
-pub mod x509;
 
 const SCHEME: &str = "mdl-openid4vp";
 
