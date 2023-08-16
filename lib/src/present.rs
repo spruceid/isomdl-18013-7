@@ -296,7 +296,7 @@ impl DeviceSession for UnattendedSessionManager {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Present for UnattendedSessionManager {
     async fn prepare_mdl_response(
         &self,
@@ -312,9 +312,9 @@ impl Present for UnattendedSessionManager {
             PresDef::PresentationDefintionUri {
                 presentation_definition_uri,
             } => {
-                let response = reqwest::get(presentation_definition_uri).await.unwrap();
+                let response = reqwest::get(presentation_definition_uri).await?;
                 let presentation_definition: PresentationDefinition =
-                    response.json().await.unwrap();
+                    response.json().await?;
                 pres_def = presentation_definition;
             }
         }
@@ -620,53 +620,3 @@ pub fn initialise_session(
         Err(Openid4vpError::InvalidRequest)
     }
 }
-
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-
-//     #[test]
-//     fn prepare_response_test() {
-//         let mut rng = rand::rngs::OsRng {};
-//         let secret_key = p256::SecretKey::random(&mut rng);
-//         let ass = secret_key.to_bytes().as_slice();
-
-//         let sk_bytes: Vec<u8> = zeroize::Zeroizing::new(secret_key.to_bytes().to_vec()).to_vec();
-//         let public_key: p256::PublicKey = secret_key.public_key();
-
-//         let ssi_private_key = ssi::jwk::JWK::generate_p256().unwrap();
-//         let ssi_public_key = ssi_private_key.to_public().clone();
-
-//         let secret = match ssi_private_key.params {
-//             Params::EC(ec) => {
-//                 Some(ec.ecc_private_key.clone().unwrap())
-//             }
-//             _ => {
-//                 None
-//             }
-//         };
-
-//         let payload = json!({
-//             "apv": "SKReader",
-//             "apu": "mdocGeneratedNonce", // fill in
-//             "epk": "pubkey",
-//             "vp_token": "token",
-//             "presentation_submission": "presentation_submission",
-//         });
-
-//         // Encode the payload into a JWE
-//         let header = Header::new(Algorithm::ES256);
-//         let encoding_key = EncodingKey::from_ec_der(&der);
-//         //let encoding_key = EncodingKey::from_base64_secret(&ssi_public_key.public_key_use.unwrap()).unwrap();
-//         let jwe_token = encode(&header, &payload, &encoding_key).unwrap();
-
-//         println!("jwe: {:?}", jwe_token);
-
-//         let decoding_key = DecodingKey::from_ec_pem(&secret.unwrap().0).expect("Failed to create decoding key");
-//         let validation = Validation::new(Algorithm::ES256); // Match the encryption algorithm used
-//         let token_data = decode::<Value>(&jwe_token, &decoding_key, &validation).expect("Failed to decode token");
-
-//         println!("token_data {:?}", token_data);
-
-//     }
-// }
