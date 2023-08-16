@@ -1,3 +1,4 @@
+use crate::utils::gen_nonce;
 use anyhow::Result;
 use async_trait::async_trait;
 use cose_rs::CoseSign1;
@@ -37,8 +38,6 @@ use serde_json::Map;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use x509_cert::der::Decode;
-
-use crate::utils::gen_nonce;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
@@ -313,8 +312,7 @@ impl Present for UnattendedSessionManager {
                 presentation_definition_uri,
             } => {
                 let response = reqwest::get(presentation_definition_uri).await?;
-                let presentation_definition: PresentationDefinition =
-                    response.json().await?;
+                let presentation_definition: PresentationDefinition = response.json().await?;
                 pres_def = presentation_definition;
             }
         }
@@ -354,7 +352,7 @@ fn _validate_mdl_request(jwt: String) -> Result<RequestObject, Openid4vpError> {
     if let Some(x5chain) = x509_chain {
         let (leaf, _intermediary) = x5chain.split_at(1);
         if let Some(cert) = leaf.first() {
-            let x509_bytes = base64::decode(cert).unwrap();
+            let x509_bytes = base64::decode(cert)?;
             //TODO: VALIDATE CHAIN WITHOUT USING OPENSSL CRATE
             //let x509_certificate = x509_certificate::X509Certificate::from_der(x509_bytes).unwrap();
             // let leaf_cert: X509 = X509(openssl::x509::X509::from_der(&x509_bytes)?);
@@ -386,7 +384,7 @@ fn _validate_mdl_request(jwt: String) -> Result<RequestObject, Openid4vpError> {
                         .subject_public_key_info;
                     let _alg = key_info.algorithm;
                     //TODO check algorithm identifier for the curve before parsing as p256 key.
-                    let parsed_vk = oidc4vp::mdl_request::x509_public_key(x509_bytes).unwrap();
+                    let parsed_vk = oidc4vp::mdl_request::x509_public_key(x509_bytes)?;
                     let parsed_vk_bytes = parsed_vk.to_sec1_bytes();
                     let parsed_verifier_key = ssi::jwk::p256_parse(&parsed_vk_bytes)?;
                     let parsed_req: RequestObject =
@@ -450,6 +448,7 @@ pub async fn prepare_openid4vp_mdl_response(
             .take(16)
             .map(char::from)
             .collect();
+        //safe unwraps
         let handover = OID4VPHandover(
             mdoc_generated_nonce,
             client_id,
@@ -465,9 +464,12 @@ pub async fn prepare_openid4vp_mdl_response(
             .prepare_mdl_response(state.request_object.clone())
             .await?;
 
-        let (_, tbs) = prepared_response.get_next_signature_payload().unwrap();
-
-        Ok(tbs.to_vec())
+        let tbs = prepared_response.get_next_signature_payload();
+        if let Some((_, t)) = tbs {
+            Ok(t.to_vec())
+        } else {
+            Err(Openid4vpError::InvalidRequest)
+        }
     } else {
         Err(Openid4vpError::InvalidRequest)
     }
@@ -519,40 +521,27 @@ fn encrypted_authorization_response(
     jwe_header.set_token_type("JWT");
     jwe_header.set_content_encryption("A256GCM");
     jwe_header.set_algorithm("ECDH-ES");
-    jwe_header
-        .set_claim(
-            "apv",
-            Some(serde_json::Value::String("SKReader".to_string())),
-        )
-        .unwrap();
-    jwe_header
-        .set_claim("apu", Some(serde_json::Value::String(state.mdoc_nonce)))
-        .unwrap(); //mdocGeneratedNonce
-    jwe_header
-        .set_claim(
-            "epk",
-            Some(serde_json::Value::Object(state.verifier_epk.clone().into())),
-        )
-        .unwrap();
+    jwe_header.set_claim(
+        "apv",
+        Some(serde_json::Value::String("SKReader".to_string())),
+    )?;
+    jwe_header.set_claim("apu", Some(serde_json::Value::String(state.mdoc_nonce)))?; //mdocGeneratedNonce
+    jwe_header.set_claim(
+        "epk",
+        Some(serde_json::Value::Object(state.verifier_epk.clone().into())),
+    )?;
     let mut jwe_payload = josekit::jwt::JwtPayload::new();
-    jwe_payload
-        .set_claim("vp_token", Some(serde_json::Value::String(vp_token)))
-        .unwrap();
-    jwe_payload
-        .set_claim(
-            "presentation_submission",
-            Some(json!(presentation_submission)),
-        )
-        .unwrap();
+    jwe_payload.set_claim("vp_token", Some(serde_json::Value::String(vp_token)))?;
+    jwe_payload.set_claim(
+        "presentation_submission",
+        Some(json!(presentation_submission)),
+    )?;
     if let Some(state) = state.request_object.state {
-        jwe_payload
-            .set_claim("state", Some(serde_json::Value::String(state)))
-            .unwrap();
+        jwe_payload.set_claim("state", Some(serde_json::Value::String(state)))?;
     }
-    let encrypter: EcdhEsJweEncrypter<NistP256> = josekit::jwe::ECDH_ES
-        .encrypter_from_jwk(&state.verifier_epk)
-        .unwrap();
-    let jwe = josekit::jwt::encode_with_encrypter(&jwe_payload, &jwe_header, &encrypter).unwrap();
+    let encrypter: EcdhEsJweEncrypter<NistP256> =
+        josekit::jwe::ECDH_ES.encrypter_from_jwk(&state.verifier_epk)?;
+    let jwe = josekit::jwt::encode_with_encrypter(&jwe_payload, &jwe_header, &encrypter)?;
 
     Ok(jwe)
 }
