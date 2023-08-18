@@ -32,7 +32,7 @@ use p256::NistP256;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use serde_cbor::to_vec;
+use serde_cbor::{to_vec, Value as Cbor};
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
@@ -116,11 +116,10 @@ pub struct UnattendedSessionTranscript(pub OID4VPHandover);
 
 impl UnattendedSessionTranscript {
     fn to_cbor(&self) -> Result<Vec<u8>, Openid4vpError> {
-        let mut cbor = serde_cbor::to_vec(&self.0)?;
-        let element: u8 = 22; // 22 is cbor for Null
-        cbor.insert(0, element);
-        cbor.insert(0, element);
-        Ok(cbor)
+        let handover_cbor = serde_cbor::value::to_value(&self.0)?;
+        let transcript_cbor = serde_cbor::Value::Array(vec![Cbor::Null, Cbor::Null, handover_cbor]);
+        let cbor_bytes = serde_cbor::to_vec(&transcript_cbor)?;
+        Ok(cbor_bytes)
     }
 }
 
@@ -609,5 +608,30 @@ pub fn initialise_session(
         Err(Openid4vpError::Empty(
             "Missing jwks in the client_metadata".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn transcript_cbor_serialization() {
+        let handover = OID4VPHandover("a".into(), "b".into(), "c".into(), "d".into());
+        let transcript = UnattendedSessionTranscript(handover);
+        let cbor_bytes = transcript.to_cbor().unwrap();
+        let cbor_parse: Cbor = serde_cbor::from_slice(&cbor_bytes).unwrap();
+        let Cbor::Array(transcript) = cbor_parse else { panic!("expected array") };
+        assert_eq!(transcript[0], Cbor::Null);
+        assert_eq!(transcript[1], Cbor::Null);
+        let Cbor::Array(ref handover) = transcript[2] else { panic!("expected array") };
+        let Cbor::Text(ref a) = handover[0] else {panic!("expected bstr")};
+        let Cbor::Text(ref b) = handover[1] else {panic!("expected bstr")};
+        let Cbor::Text(ref c) = handover[2] else {panic!("expected bstr")};
+        let Cbor::Text(ref d) = handover[3] else {panic!("expected bstr")};
+        assert_eq!(a, "a");
+        assert_eq!(b, "b");
+        assert_eq!(c, "c");
+        assert_eq!(d, "d");
     }
 }
