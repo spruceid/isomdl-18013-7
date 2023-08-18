@@ -44,8 +44,6 @@ pub struct State {
     pub mdoc_nonce: String,
     pub request_object: RequestObject,
     pub verifier_epk: Jwk,
-    pub mdoc_epk: Jwk,
-    pub mdoc_esk: Jwk,
 }
 
 impl State {
@@ -53,15 +51,11 @@ impl State {
         mdoc_nonce: String,
         request_object: RequestObject,
         verifier_epk: Jwk,
-        mdoc_epk: Jwk,
-        mdoc_esk: Jwk,
     ) -> Result<Self> {
         Ok(State {
             mdoc_nonce,
             request_object,
             verifier_epk,
-            mdoc_epk,
-            mdoc_esk,
         })
     }
 }
@@ -584,16 +578,7 @@ pub fn initialise_session(
                         Value::Object(k) => {
                             let sk_reader = josekit::jwk::Jwk::from_map(k.clone()).unwrap(); //todo: fix unwrap
                                                                                              //todo: dynamic curve selection
-                            let cek_pair = josekit::jwe::ECDH_ES
-                                .generate_ec_key_pair::<p256::NistP256>()
-                                .unwrap();
-                            let sm = State::new(
-                                mdoc_nonce,
-                                request_object,
-                                sk_reader,
-                                cek_pair.to_jwk_public_key(),
-                                cek_pair.to_jwk_private_key(),
-                            )?;
+                            let sm = State::new(mdoc_nonce, request_object, sk_reader)?;
                             Ok(sm)
                         }
                         _ => Err(Openid4vpError::InvalidRequest),
