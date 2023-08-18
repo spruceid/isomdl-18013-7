@@ -243,6 +243,8 @@ pub fn decrypted_authorization_response(
             _ => Err(Openid4vpError::UnrecognizedField),
         }
     } else {
-        Err(Openid4vpError::Empty)
+        Err(Openid4vpError::Empty(
+            "no vp_token found in the response".to_string(),
+        ))
     }
 }

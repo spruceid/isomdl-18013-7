@@ -606,6 +606,8 @@ pub fn initialise_session(
             _ => Err(Openid4vpError::InvalidRequest),
         }
     } else {
-        Err(Openid4vpError::InvalidRequest)
+        Err(Openid4vpError::Empty(
+            "Missing jwks in the client_metadata".to_string(),
+        ))
     }
 }

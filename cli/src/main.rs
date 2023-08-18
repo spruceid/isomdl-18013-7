@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
 use dialoguer::{theme::ColorfulTheme, Confirm};
-use isomdl_18013_7::{isomdl::presentation::device::PermittedItems, ResponseRedirectType, Wallet};
+use isomdl180137::{isomdl::presentation::device::PermittedItems, ResponseRedirectType, Wallet};
 use url::Url;
 
 #[derive(Parser)]
