@@ -472,7 +472,7 @@ pub async fn complete_mdl_response(
     mut prepared_response: PreparedDeviceResponse,
     state: State,
     signature: Vec<u8>,
-) -> Result<String, Openid4vpError> {
+) -> Result<String, anyhow::Error> {
     prepared_response.submit_next_signature(signature);
 
     let oid4vp_response = prepared_response.finalize_oid4vp_response();
@@ -492,7 +492,7 @@ pub async fn complete_mdl_response(
 fn encrypted_authorization_response(
     device_response: DeviceResponse,
     state: State,
-) -> Result<String, Openid4vpError> {
+) -> Result<String, anyhow::Error> {
     let descriptor_map = DescriptorMap {
         id: "org.iso.18013.5.1.mDL".to_string(),
         format: "mso_mdoc".to_string(), //TODO: fix
