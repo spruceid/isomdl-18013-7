@@ -563,8 +563,9 @@ pub fn initialise_session(
                         Value::Object(obj) => {
                             let verifier_epk = josekit::jwk::Jwk::from_map(obj.clone()).unwrap(); //todo: fix unwrap
                             let curve = verifier_epk.curve();
-                            if let Some(c) = curve {
-                                *c == supported_crv
+                            let key_use = verifier_epk.key_use();
+                            if let (Some(c), Some(u)) = (curve, key_use) {
+                                *c == supported_crv && u == "enc"
                             } else {
                                 false
                             }
