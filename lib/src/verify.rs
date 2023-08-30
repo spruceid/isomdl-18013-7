@@ -1,10 +1,14 @@
+use crate::present::UnattendedDeviceAuthentication;
+use crate::present::UnattendedSessionTranscript;
 use anyhow::Result;
 use elliptic_curve::generic_array::GenericArray;
 use isomdl;
 use isomdl::definitions::helpers::non_empty_map::NonEmptyMap;
+use isomdl::definitions::helpers::Tag24;
 use isomdl::definitions::oid4vp::DeviceResponse;
-use isomdl::presentation::reader::Error as IsomdlError;
 use isomdl::definitions::DeviceAuth;
+use isomdl::definitions::Mso;
+use isomdl::presentation::reader::Error as IsomdlError;
 use josekit::jwe::alg::ecdh_es::EcdhEsJweDecrypter;
 use josekit::jwk::Jwk;
 use oidc4vp::mdl_request::ClientMetadata;
@@ -18,19 +22,15 @@ use oidc4vp::{
     },
     utils::NonEmptyVec,
 };
-use p256::NistP256;
 use p256::ecdsa::Signature;
+use p256::ecdsa::VerifyingKey;
+use p256::NistP256;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value as CborValue;
 use serde_json::{json, Value};
 use ssi::jwk::Params;
-use std::collections::BTreeMap;
-use isomdl::definitions::Mso;
-use isomdl::definitions::helpers::Tag24;
-use p256::ecdsa::VerifyingKey;
 use ssi::jwk::JWK as SsiJwk;
-use crate::present::UnattendedDeviceAuthentication;
-use crate::present::UnattendedSessionTranscript;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnattendedSessionManager {
@@ -64,20 +64,22 @@ pub trait ReaderSession {
         // 4. The reader must verify that the `DeviceKey` is the subject of the x5chain, and that the
         //    x5chain is consistent and issued by a trusted source.
         let document = device_response
-        .documents.clone()
-        .ok_or(IsomdlError::DeviceTransmissionError)?
-        .into_inner()
-        .into_iter()
-        .find(|doc| doc.doc_type == "org.iso.18013.5.1.mDL")
-        .ok_or(IsomdlError::DocumentTypeError)?;
-        
+            .documents
+            .clone()
+            .ok_or(IsomdlError::DeviceTransmissionError)?
+            .into_inner()
+            .into_iter()
+            .find(|doc| doc.doc_type == "org.iso.18013.5.1.mDL")
+            .ok_or(IsomdlError::DocumentTypeError)?;
+
         let issuer_signed = document.issuer_signed.clone();
 
         let mso_bytes = issuer_signed
-        .issuer_auth
-        .payload()
-        .expect("expected a COSE_Sign1 with attached payload, found detached payload");
-        let mso: Tag24<Mso> = serde_cbor::from_slice(mso_bytes).expect("unable to parse payload as Mso");
+            .issuer_auth
+            .payload()
+            .expect("expected a COSE_Sign1 with attached payload, found detached payload");
+        let mso: Tag24<Mso> =
+            serde_cbor::from_slice(mso_bytes).expect("unable to parse payload as Mso");
 
         let header = issuer_signed.issuer_auth.unprotected();
         let x5chain = header.get_i(33);
@@ -91,7 +93,7 @@ pub trait ReaderSession {
         //         let builder = Builder::default();
         //         let builder = Builder::with_der(builder, t.as_bytes()).unwrap();
         //         let certs = builder.build().unwrap();
-                
+
         //         //let signer_key = certs.x509_public_key();
 
         //         // to do validate root cert
@@ -110,7 +112,6 @@ pub trait ReaderSession {
         //                 _ => { return Err(IsomdlError::CborDecodingError)}
         //             }
         //         }
-
 
         //         // validate chain to root cert
         //     }
@@ -136,32 +137,43 @@ pub trait ReaderSession {
             Params::EC(p) => {
                 let x = p.x_coordinate.clone().unwrap();
                 let y = p.y_coordinate.clone().unwrap();
-                let encoded_point = p256::EncodedPoint::from_affine_coordinates(GenericArray::from_slice(x.0.as_slice()), GenericArray::from_slice(y.0.as_slice()), false);
+                let encoded_point = p256::EncodedPoint::from_affine_coordinates(
+                    GenericArray::from_slice(x.0.as_slice()),
+                    GenericArray::from_slice(y.0.as_slice()),
+                    false,
+                );
                 let verifying_key = VerifyingKey::from_encoded_point(&encoded_point).unwrap();
 
                 let namespace_bytes = document.device_signed.namespaces;
                 let device_auth = document.device_signed.device_auth;
-                let st = session_transcript.to_cbor().unwrap();
                 match device_auth {
                     DeviceAuth::Signature { device_signature } => {
                         println!("device_signature: {:#?}", device_signature);
-                        let detached_payload = UnattendedDeviceAuthentication::new(st, document.doc_type, namespace_bytes);
+                        let detached_payload = UnattendedDeviceAuthentication::new(
+                            session_transcript,
+                            document.doc_type,
+                            namespace_bytes,
+                        );
                         let external_aad = None;
                         let cbor_payload = serde_cbor::to_vec(&detached_payload)?;
-                        let result = device_signature.verify::<VerifyingKey, Signature>(&verifying_key, Some(cbor_payload), external_aad);
+                        let result = device_signature.verify::<VerifyingKey, Signature>(
+                            &verifying_key,
+                            Some(cbor_payload),
+                            external_aad,
+                        );
                         println!("result: {:?}", result);
                         if !result.success() {
-                            return Err(IsomdlError::ParsingError)
+                            return Err(IsomdlError::ParsingError);
                         }
-                    },
+                    }
                     DeviceAuth::Mac { .. } => {
                         // send not yet supported error
                     }
                 }
-            },
+            }
             _ => {}
         }
-        
+
         let mut parsed_response = BTreeMap::<String, serde_json::Value>::new();
         //let response = device_response;
         device_response

@@ -32,7 +32,7 @@ use p256::NistP256;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use serde_cbor::{to_vec, Value as Cbor};
+use serde_cbor::to_vec;
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
@@ -92,7 +92,7 @@ pub struct UnattendedDeviceAuthentication(
 
 impl UnattendedDeviceAuthentication {
     pub fn new(
-        transcript: Vec<u8>,
+        transcript: UnattendedSessionTranscript,
         doc_type: String,
         namespaces_bytes: DeviceNamespacesBytes,
     ) -> Self {
@@ -106,25 +106,26 @@ impl UnattendedDeviceAuthentication {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UnattendedSessionTranscript(pub OID4VPHandover);
+pub struct UnattendedSessionTranscript((), (), OID4VPHandover);
 
 impl UnattendedSessionTranscript {
-    pub fn to_cbor(&self) -> Result<Vec<u8>, Openid4vpError> {
-        let handover_cbor = serde_cbor::value::to_value(&self.0)?;
-        let transcript_cbor = serde_cbor::Value::Array(vec![Cbor::Null, Cbor::Null, handover_cbor]);
-        let cbor_bytes = serde_cbor::to_vec(&transcript_cbor)?;
-        Ok(cbor_bytes)
+    pub fn new(handover: OID4VPHandover) -> Self {
+        Self((), (), handover)
+    }
+
+    pub fn handover(&self) -> &OID4VPHandover {
+        &self.2
     }
 }
 
 impl DeviceSession for UnattendedSessionManager {
-    type T = Vec<u8>;
+    type T = UnattendedSessionTranscript;
     fn documents(&self) -> &Documents {
         &self.documents
     }
 
     fn session_transcript(&self) -> Self::T {
-        self.session_transcript.to_cbor().unwrap()
+        self.session_transcript.clone()
     }
 
     fn prepare_response(
@@ -448,7 +449,7 @@ pub async fn prepare_openid4vp_mdl_response(
             response_uri.unwrap(),
             nonce.unwrap(),
         );
-        let session_transcript = UnattendedSessionTranscript(handover);
+        let session_transcript = UnattendedSessionTranscript::new(handover);
         //tag 24 the session transcript
         let unattended_session_manager =
             UnattendedSessionManager::new(session_transcript, documents)?;
@@ -476,7 +477,12 @@ pub async fn complete_mdl_response(
     println!("signature: {:?}", signature);
     prepared_response.submit_next_signature(signature);
 
-    let x = &prepared_response.signed_documents.first().unwrap().device_signed.device_auth;
+    let x = &prepared_response
+        .signed_documents
+        .first()
+        .unwrap()
+        .device_signed
+        .device_auth;
     println!("x: {:?}", x);
 
     let oid4vp_response = prepared_response.finalize_oid4vp_response();
@@ -604,12 +610,13 @@ pub fn initialise_session(
 #[cfg(test)]
 mod test {
     use super::*;
+    use serde_cbor::Value as Cbor;
 
     #[test]
     fn transcript_cbor_serialization() {
         let handover = OID4VPHandover("a".into(), "b".into(), "c".into(), "d".into());
-        let transcript = UnattendedSessionTranscript(handover);
-        let cbor_bytes = transcript.to_cbor().unwrap();
+        let transcript = UnattendedSessionTranscript::new(handover);
+        let cbor_bytes = serde_cbor::to_vec(&transcript).unwrap();
         let cbor_parse: Cbor = serde_cbor::from_slice(&cbor_bytes).unwrap();
         let Cbor::Array(transcript) = cbor_parse else { panic!("expected array") };
         assert_eq!(transcript[0], Cbor::Null);
