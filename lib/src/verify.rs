@@ -149,11 +149,12 @@ pub trait ReaderSession {
                 match device_auth {
                     DeviceAuth::Signature { device_signature } => {
                         println!("device_signature: {:#?}", device_signature);
-                        let detached_payload = UnattendedDeviceAuthentication::new(
+                        let detached_payload = Tag24::new(UnattendedDeviceAuthentication::new(
                             session_transcript,
                             document.doc_type,
                             namespace_bytes,
-                        );
+                        ))
+                        .map_err(|_| IsomdlError::CborDecodingError)?;
                         let external_aad = None;
                         let cbor_payload = serde_cbor::to_vec(&detached_payload)?;
                         let result = device_signature.verify::<VerifyingKey, Signature>(
