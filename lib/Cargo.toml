@@ -11,7 +11,7 @@ documentation = "https://docs.rs/isomdl-18013-7/"
 [dependencies]
 anyhow = "1.0.66"
 oidc4vp = { git = "https://github.com/spruceid/oidc4vp-rs.git", rev = "ef2aa2f" }
-# oidc4vp = { path = "../../oidc4vp-rs"}
+#oidc4vp = { path = "../../oidc4vp-rs"}
 isomdl = { git = "ssh://git@github.com/spruceid/isomdl.git", rev = "b2324b7" }
 #isomdl = {path = "../../isomdl"}
 openidconnect = { git = "https://github.com/ramosbugs/openidconnect-rs", branch = "main" }
@@ -31,7 +31,7 @@ serde_json = "1.0.89"
 chrono = "0.4.23"
 serde_cbor = "0.11.2"
 base64 = "0.13.1"
-p256 = { version = "0.13.2", features = ["jwk"] }
+p256 = { version = "0.13.2", features = ["jwk", "ecdsa"] }
 signature = "2.1.0"
 async-trait = "0.1.72"
 josekit = { git = "https://github.com/cobward/josekit-rs", rev = "635c8a7" }

@@ -82,7 +82,7 @@ impl UnattendedSessionManager {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OID4VPHandover(pub String, pub String, pub String, pub String);
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct UnattendedDeviceAuthentication(
     &'static str,
     pub <UnattendedSessionManager as DeviceSession>::T,
@@ -109,7 +109,7 @@ impl UnattendedDeviceAuthentication {
 pub struct UnattendedSessionTranscript(pub OID4VPHandover);
 
 impl UnattendedSessionTranscript {
-    fn to_cbor(&self) -> Result<Vec<u8>, Openid4vpError> {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, Openid4vpError> {
         let handover_cbor = serde_cbor::value::to_value(&self.0)?;
         let transcript_cbor = serde_cbor::Value::Array(vec![Cbor::Null, Cbor::Null, handover_cbor]);
         let cbor_bytes = serde_cbor::to_vec(&transcript_cbor)?;
@@ -473,7 +473,11 @@ pub async fn complete_mdl_response(
     state: State,
     signature: Vec<u8>,
 ) -> Result<String, Openid4vpError> {
+    println!("signature: {:?}", signature);
     prepared_response.submit_next_signature(signature);
+
+    let x = &prepared_response.signed_documents.first().unwrap().device_signed.device_auth;
+    println!("x: {:?}", x);
 
     let oid4vp_response = prepared_response.finalize_oid4vp_response();
     let jwe = encrypted_authorization_response(oid4vp_response, state)?;

@@ -1,8 +1,10 @@
 use anyhow::Result;
+use elliptic_curve::generic_array::GenericArray;
 use isomdl;
 use isomdl::definitions::helpers::non_empty_map::NonEmptyMap;
 use isomdl::definitions::oid4vp::DeviceResponse;
 use isomdl::presentation::reader::Error as IsomdlError;
+use isomdl::definitions::DeviceAuth;
 use josekit::jwe::alg::ecdh_es::EcdhEsJweDecrypter;
 use josekit::jwk::Jwk;
 use oidc4vp::mdl_request::ClientMetadata;
@@ -17,10 +19,18 @@ use oidc4vp::{
     utils::NonEmptyVec,
 };
 use p256::NistP256;
+use p256::ecdsa::Signature;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value as CborValue;
 use serde_json::{json, Value};
+use ssi::jwk::Params;
 use std::collections::BTreeMap;
+use isomdl::definitions::Mso;
+use isomdl::definitions::helpers::Tag24;
+use p256::ecdsa::VerifyingKey;
+use ssi::jwk::JWK as SsiJwk;
+use crate::present::UnattendedDeviceAuthentication;
+use crate::present::UnattendedSessionTranscript;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnattendedSessionManager {
@@ -38,6 +48,7 @@ pub trait ReaderSession {
     fn handle_response(
         &mut self,
         device_response: DeviceResponse,
+        session_transcript: UnattendedSessionTranscript,
     ) -> Result<BTreeMap<String, Value>, IsomdlError> {
         // TODO: Mdoc authentication.
         //
@@ -52,9 +63,108 @@ pub trait ReaderSession {
         //
         // 4. The reader must verify that the `DeviceKey` is the subject of the x5chain, and that the
         //    x5chain is consistent and issued by a trusted source.
+        let document = device_response
+        .documents.clone()
+        .ok_or(IsomdlError::DeviceTransmissionError)?
+        .into_inner()
+        .into_iter()
+        .find(|doc| doc.doc_type == "org.iso.18013.5.1.mDL")
+        .ok_or(IsomdlError::DocumentTypeError)?;
+        
+        let issuer_signed = document.issuer_signed.clone();
+
+        let mso_bytes = issuer_signed
+        .issuer_auth
+        .payload()
+        .expect("expected a COSE_Sign1 with attached payload, found detached payload");
+        let mso: Tag24<Mso> = serde_cbor::from_slice(mso_bytes).expect("unable to parse payload as Mso");
+
+        let header = issuer_signed.issuer_auth.unprotected();
+        let x5chain = header.get_i(33);
+
+        println!("x5chain: {:?}", x5chain);
+
+        // match x5chain {
+        //     Some(CborValue::Text(t)) => {
+        //         let x509 = x509_cert::Certificate::from_der(t.as_bytes()).unwrap();
+        //         let signer_key = x509.tbs_certificate.subject_public_key_info.subject_public_key;
+        //         let builder = Builder::default();
+        //         let builder = Builder::with_der(builder, t.as_bytes()).unwrap();
+        //         let certs = builder.build().unwrap();
+                
+        //         //let signer_key = certs.x509_public_key();
+
+        //         // to do validate root cert
+
+        //     },
+        //     Some(CborValue::Array(a)) => {
+        //         let leaf = a.first().clone();
+        //         if let Some(l) = leaf {
+        //             match l {
+        //                 CborValue::Text(t) => {
+        //                     let builder = Builder::default();
+        //                     let builder = Builder::with_der(builder, t.as_bytes()).unwrap();
+        //                     let certs = builder.build().unwrap();
+        //                     //let signer_key = certs.x509_public_key();
+        //                 },
+        //                 _ => { return Err(IsomdlError::CborDecodingError)}
+        //             }
+        //         }
+
+
+        //         // validate chain to root cert
+        //     }
+        //     _ => {
+        //         return Err(IsomdlError::CborDecodingError)
+        //     }
+
+        // }
+        // parse x509 certificate
+        // grab public key from cert
+        // validate the chain
+        // let signer_key = todo!();
+        // let issuer_auth = issuer_signed.issuer_auth;
+        // let verification_result: cose_rs::sign1::VerificationResult = issuer_auth.verify::<VerifyingKey, Signature>(&signer_key, None, None);
+        // if !verification_result.success() {
+        //     return Err(IsomdlError::ParsingError)
+        // }
+
+        let device_key = mso.into_inner().device_key_info.device_key;
+        let jwk = SsiJwk::try_from(device_key).unwrap();
+        let params = jwk.params;
+        match params {
+            Params::EC(p) => {
+                let x = p.x_coordinate.clone().unwrap();
+                let y = p.y_coordinate.clone().unwrap();
+                let encoded_point = p256::EncodedPoint::from_affine_coordinates(GenericArray::from_slice(x.0.as_slice()), GenericArray::from_slice(y.0.as_slice()), false);
+                let verifying_key = VerifyingKey::from_encoded_point(&encoded_point).unwrap();
+
+                let namespace_bytes = document.device_signed.namespaces;
+                let device_auth = document.device_signed.device_auth;
+                let st = session_transcript.to_cbor().unwrap();
+                match device_auth {
+                    DeviceAuth::Signature { device_signature } => {
+                        println!("device_signature: {:#?}", device_signature);
+                        let detached_payload = UnattendedDeviceAuthentication::new(st, document.doc_type, namespace_bytes);
+                        let external_aad = None;
+                        let cbor_payload = serde_cbor::to_vec(&detached_payload)?;
+                        let result = device_signature.verify::<VerifyingKey, Signature>(&verifying_key, Some(cbor_payload), external_aad);
+                        println!("result: {:?}", result);
+                        if !result.success() {
+                            return Err(IsomdlError::ParsingError)
+                        }
+                    },
+                    DeviceAuth::Mac { .. } => {
+                        // send not yet supported error
+                    }
+                }
+            },
+            _ => {}
+        }
+        
         let mut parsed_response = BTreeMap::<String, serde_json::Value>::new();
-        let response = device_response;
-        response
+        //let response = device_response;
+        device_response
             .documents
             .ok_or(IsomdlError::DeviceTransmissionError)?
             .into_inner()
@@ -229,16 +339,20 @@ fn build_input_descriptors(
 pub fn decrypted_authorization_response(
     response: String,
     state: UnattendedSessionManager,
-) -> Result<Vec<u8>, Openid4vpError> {
+) -> Result<(Vec<u8>, Value), Openid4vpError> {
     let decrypter: EcdhEsJweDecrypter<NistP256> =
         josekit::jwe::ECDH_ES.decrypter_from_jwk(&state.esk)?;
     let (payload, _header) = josekit::jwt::decode_with_decrypter(response, &decrypter)?;
+    let Some(mdoc_generated_nonce) = _header.claim("apu") else {
+        return Err(Openid4vpError::JoseError("missing apu in header".to_string()))
+    };
+
     let vp_token = payload.claim("vp_token");
     if let Some(token) = vp_token {
         match token {
             Value::String(s) => {
                 let result = base64url::decode(&s).unwrap();
-                Ok(result)
+                Ok((result, mdoc_generated_nonce.to_owned()))
             }
             _ => Err(Openid4vpError::UnrecognizedField),
         }
