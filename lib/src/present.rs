@@ -510,9 +510,20 @@ fn encrypted_authorization_response(
         path_nested: None,
     };
 
+    let presentation_definition = state.request_object.presentation_definition;
+    let pres_def_id = match presentation_definition {
+        PresDef::PresentationDefinition { presentation_definition } => {
+            presentation_definition.id
+        }, 
+        _ => {
+            return Err(Openid4vpError::InvalidPresentationDefinitionReference)
+        }
+
+    };
+
     let presentation_submission = PresentationSubmission {
         id: "spruceid-mDL-req".to_string(),
-        definition_id: "spruceid-mDL-res".to_string(),
+        definition_id: pres_def_id,
         descriptor_map: vec![descriptor_map],
     };
 
