@@ -241,6 +241,7 @@ impl DeviceSession for UnattendedSessionManager {
                     continue;
                 }
             };
+
             let device_auth_bytes = match serde_cbor::to_vec(&device_auth) {
                 Ok(dab) => dab,
                 Err(_e) => {
@@ -474,17 +475,7 @@ pub async fn complete_mdl_response(
     state: State,
     signature: Vec<u8>,
 ) -> Result<String, Openid4vpError> {
-    println!("signature: {:?}", signature);
     prepared_response.submit_next_signature(signature);
-
-    let x = &prepared_response
-        .signed_documents
-        .first()
-        .unwrap()
-        .device_signed
-        .device_auth;
-    println!("x: {:?}", x);
-
     let oid4vp_response = prepared_response.finalize_oid4vp_response();
     let jwe = encrypted_authorization_response(oid4vp_response, state)?;
 
@@ -507,7 +498,6 @@ fn encrypted_authorization_response(
         id: "org.iso.18013.5.1.mDL".to_string(),
         format: "mso_mdoc".to_string(), //TODO: fix
         path: "$".to_string(),
-        path_nested: None,
     };
 
     let presentation_definition = state.request_object.presentation_definition;

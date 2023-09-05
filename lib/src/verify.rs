@@ -31,6 +31,8 @@ use serde_json::{json, Value};
 use ssi::jwk::Params;
 use ssi::jwk::JWK as SsiJwk;
 use std::collections::BTreeMap;
+//use x509_cert::der::Decode;
+//use p256::pkcs8::DecodePublicKey;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnattendedSessionManager {
@@ -49,7 +51,7 @@ pub trait ReaderSession {
         &mut self,
         device_response: DeviceResponse,
         session_transcript: UnattendedSessionTranscript,
-    ) -> Result<BTreeMap<String, Value>, IsomdlError> {
+    ) -> Result<BTreeMap<String, Value>, Openid4vpError> {
         // TODO: Mdoc authentication.
         //
         // 1. As part of mdoc response, mdl produces `DeviceAuth`, which is either a `DeviceSignature` or
@@ -82,73 +84,82 @@ pub trait ReaderSession {
             serde_cbor::from_slice(mso_bytes).expect("unable to parse payload as Mso");
 
         let header = issuer_signed.issuer_auth.unprotected();
-        let x5chain = header.get_i(33);
+        let Some(_x5chain) = header.get_i(33) else {
+            return Err(Openid4vpError::Empty("Missing x5chain header".to_string()))
+        };
 
-        println!("x5chain: {:?}", x5chain);
-
-        // match x5chain {
-        //     Some(CborValue::Text(t)) => {
-        //         let x509 = x509_cert::Certificate::from_der(t.as_bytes()).unwrap();
+        // let x5c = x5chain.to_owned();
+        // let signer_key = match x5c {
+        //     CborValue::Text(t) => {
+        //         let x509 = x509_cert::Certificate::from_der(t.as_bytes())?;
         //         let signer_key = x509.tbs_certificate.subject_public_key_info.subject_public_key;
-        //         let builder = Builder::default();
-        //         let builder = Builder::with_der(builder, t.as_bytes()).unwrap();
-        //         let certs = builder.build().unwrap();
-
-        //         //let signer_key = certs.x509_public_key();
-
+        //         signer_key
         //         // to do validate root cert
 
         //     },
-        //     Some(CborValue::Array(a)) => {
+        //     CborValue::Array(a) => {
         //         let leaf = a.first().clone();
         //         if let Some(l) = leaf {
         //             match l {
         //                 CborValue::Text(t) => {
-        //                     let builder = Builder::default();
-        //                     let builder = Builder::with_der(builder, t.as_bytes()).unwrap();
-        //                     let certs = builder.build().unwrap();
-        //                     //let signer_key = certs.x509_public_key();
+                            
+        //                     let x509 = x509_cert::Certificate::from_der(t.as_bytes())?;
+        //                     let signer_key = x509.tbs_certificate.subject_public_key_info.subject_public_key;
+        //                     signer_key
         //                 },
-        //                 _ => { return Err(IsomdlError::CborDecodingError)}
+        //                 _ => { return Err(IsomdlError::CborDecodingError)?}
         //             }
+        //         } else {
+        //             return Err(IsomdlError::CborDecodingError)?
         //         }
 
         //         // validate chain to root cert
+        //     },
+        //     CborValue::Bytes(b) => {
+        //         let x509 = x509_cert::Certificate::from_der(&b)?;
+        //         let signer_key = x509.tbs_certificate.subject_public_key_info.subject_public_key;
+        //         signer_key
+        //         // to do validate root cert
         //     }
         //     _ => {
-        //         return Err(IsomdlError::CborDecodingError)
+        //         return Err(Openid4vpError::Empty(format!("{:?}", x5c)))?
         //     }
 
-        // }
+        // };
+        // let Some(bytes) = signer_key.as_bytes() else { return Err(Openid4vpError::JoseError("invalid key bytes".to_string()))};
+        // let key =VerifyingKey::from_public_key_der(bytes)?;
+        
         // parse x509 certificate
         // grab public key from cert
         // validate the chain
-        // let signer_key = todo!();
         // let issuer_auth = issuer_signed.issuer_auth;
-        // let verification_result: cose_rs::sign1::VerificationResult = issuer_auth.verify::<VerifyingKey, Signature>(&signer_key, None, None);
+        // let verification_result: cose_rs::sign1::VerificationResult = issuer_auth.verify::<VerifyingKey, Signature>(&key, None, None);
         // if !verification_result.success() {
-        //     return Err(IsomdlError::ParsingError)
+        //     return Err(IsomdlError::ParsingError)?
         // }
 
         let device_key = mso.into_inner().device_key_info.device_key;
-        let jwk = SsiJwk::try_from(device_key).unwrap();
+        let jwk = SsiJwk::try_from(device_key)?;
         let params = jwk.params;
         match params {
             Params::EC(p) => {
-                let x = p.x_coordinate.clone().unwrap();
-                let y = p.y_coordinate.clone().unwrap();
+
+                let x_coordinate = p.x_coordinate.clone();
+                let y_coordinate = p.y_coordinate.clone();
+                let (Some(x), Some(y)) = (x_coordinate, y_coordinate) else {
+                    return Err(Openid4vpError::Empty("jwk is missing coordinates".to_string()))
+                };
                 let encoded_point = p256::EncodedPoint::from_affine_coordinates(
                     GenericArray::from_slice(x.0.as_slice()),
                     GenericArray::from_slice(y.0.as_slice()),
                     false,
                 );
-                let verifying_key = VerifyingKey::from_encoded_point(&encoded_point).unwrap();
+                let verifying_key = VerifyingKey::from_encoded_point(&encoded_point)?;
 
                 let namespace_bytes = document.device_signed.namespaces;
                 let device_auth = document.device_signed.device_auth;
                 match device_auth {
                     DeviceAuth::Signature { device_signature } => {
-                        println!("device_signature: {:#?}", device_signature);
                         let detached_payload = Tag24::new(UnattendedDeviceAuthentication::new(
                             session_transcript,
                             document.doc_type,
@@ -162,9 +173,8 @@ pub trait ReaderSession {
                             Some(cbor_payload),
                             external_aad,
                         );
-                        println!("result: {:?}", result);
                         if !result.success() {
-                            return Err(IsomdlError::ParsingError);
+                            return Err(IsomdlError::ParsingError)?;
                         }
                     }
                     DeviceAuth::Mac { .. } => {
@@ -176,7 +186,6 @@ pub trait ReaderSession {
         }
 
         let mut parsed_response = BTreeMap::<String, serde_json::Value>::new();
-        //let response = device_response;
         device_response
             .documents
             .ok_or(IsomdlError::DeviceTransmissionError)?

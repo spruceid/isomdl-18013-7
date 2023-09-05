@@ -10,7 +10,7 @@ documentation = "https://docs.rs/isomdl-18013-7/"
 
 [dependencies]
 anyhow = "1.0.66"
-oidc4vp = { git = "https://github.com/spruceid/oidc4vp-rs.git", rev = "ef2aa2f" }
+oidc4vp = { git = "https://github.com/spruceid/oidc4vp-rs.git", rev = "f9557eb" }
 #oidc4vp = { path = "../../oidc4vp-rs"}
 isomdl = { git = "ssh://git@github.com/spruceid/isomdl.git", rev = "b2324b7" }
 #isomdl = {path = "../../isomdl"}
