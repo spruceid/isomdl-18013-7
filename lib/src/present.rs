@@ -517,7 +517,8 @@ fn encrypted_authorization_response(
         descriptor_map: vec![descriptor_map],
     };
 
-    //TODO: is this correct?
+    println!("epk: {:?}", state.verifier_epk.clone());
+
     let inner_bytes = to_vec(&device_response)?;
     let vp_token = base64url::encode(inner_bytes);
 

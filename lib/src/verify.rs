@@ -1,12 +1,12 @@
-use crate::present::UnattendedDeviceAuthentication;
+//use crate::present::UnattendedDeviceAuthentication;
 use crate::present::UnattendedSessionTranscript;
 use anyhow::Result;
-use elliptic_curve::generic_array::GenericArray;
+//use elliptic_curve::generic_array::GenericArray;
 use isomdl;
 use isomdl::definitions::helpers::non_empty_map::NonEmptyMap;
 use isomdl::definitions::helpers::Tag24;
 use isomdl::definitions::oid4vp::DeviceResponse;
-use isomdl::definitions::DeviceAuth;
+//use isomdl::definitions::DeviceAuth;
 use isomdl::definitions::Mso;
 use isomdl::presentation::reader::Error as IsomdlError;
 use josekit::jwe::alg::ecdh_es::EcdhEsJweDecrypter;
@@ -22,14 +22,14 @@ use oidc4vp::{
     },
     utils::NonEmptyVec,
 };
-use p256::ecdsa::Signature;
-use p256::ecdsa::VerifyingKey;
+//use p256::ecdsa::Signature;
+//use p256::ecdsa::VerifyingKey;
 use p256::NistP256;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value as CborValue;
 use serde_json::{json, Value};
-use ssi::jwk::Params;
-use ssi::jwk::JWK as SsiJwk;
+//use ssi::jwk::Params;
+//use ssi::jwk::JWK as SsiJwk;
 use std::collections::BTreeMap;
 //use x509_cert::der::Decode;
 //use p256::pkcs8::DecodePublicKey;
@@ -50,7 +50,7 @@ pub trait ReaderSession {
     fn handle_response(
         &mut self,
         device_response: DeviceResponse,
-        session_transcript: UnattendedSessionTranscript,
+        _session_transcript: UnattendedSessionTranscript,
     ) -> Result<BTreeMap<String, Value>, Openid4vpError> {
         // TODO: Mdoc authentication.
         //
@@ -80,7 +80,7 @@ pub trait ReaderSession {
             .issuer_auth
             .payload()
             .expect("expected a COSE_Sign1 with attached payload, found detached payload");
-        let mso: Tag24<Mso> =
+        let _mso: Tag24<Mso> =
             serde_cbor::from_slice(mso_bytes).expect("unable to parse payload as Mso");
 
         let header = issuer_signed.issuer_auth.unprotected();
@@ -138,52 +138,52 @@ pub trait ReaderSession {
         //     return Err(IsomdlError::ParsingError)?
         // }
 
-        let device_key = mso.into_inner().device_key_info.device_key;
-        let jwk = SsiJwk::try_from(device_key)?;
-        let params = jwk.params;
-        match params {
-            Params::EC(p) => {
+        // let device_key = mso.into_inner().device_key_info.device_key;
+        // let jwk = SsiJwk::try_from(device_key)?;
+        // let params = jwk.params;
+        // match params {
+        //     Params::EC(p) => {
 
-                let x_coordinate = p.x_coordinate.clone();
-                let y_coordinate = p.y_coordinate.clone();
-                let (Some(x), Some(y)) = (x_coordinate, y_coordinate) else {
-                    return Err(Openid4vpError::Empty("jwk is missing coordinates".to_string()))
-                };
-                let encoded_point = p256::EncodedPoint::from_affine_coordinates(
-                    GenericArray::from_slice(x.0.as_slice()),
-                    GenericArray::from_slice(y.0.as_slice()),
-                    false,
-                );
-                let verifying_key = VerifyingKey::from_encoded_point(&encoded_point)?;
+        //         let x_coordinate = p.x_coordinate.clone();
+        //         let y_coordinate = p.y_coordinate.clone();
+        //         let (Some(x), Some(y)) = (x_coordinate, y_coordinate) else {
+        //             return Err(Openid4vpError::Empty("jwk is missing coordinates".to_string()))
+        //         };
+        //         let encoded_point = p256::EncodedPoint::from_affine_coordinates(
+        //             GenericArray::from_slice(x.0.as_slice()),
+        //             GenericArray::from_slice(y.0.as_slice()),
+        //             false,
+        //         );
+        //         let verifying_key = VerifyingKey::from_encoded_point(&encoded_point)?;
 
-                let namespace_bytes = document.device_signed.namespaces;
-                let device_auth = document.device_signed.device_auth;
-                match device_auth {
-                    DeviceAuth::Signature { device_signature } => {
-                        let detached_payload = Tag24::new(UnattendedDeviceAuthentication::new(
-                            session_transcript,
-                            document.doc_type,
-                            namespace_bytes,
-                        ))
-                        .map_err(|_| IsomdlError::CborDecodingError)?;
-                        let external_aad = None;
-                        let cbor_payload = serde_cbor::to_vec(&detached_payload)?;
-                        let result = device_signature.verify::<VerifyingKey, Signature>(
-                            &verifying_key,
-                            Some(cbor_payload),
-                            external_aad,
-                        );
-                        if !result.success() {
-                            return Err(IsomdlError::ParsingError)?;
-                        }
-                    }
-                    DeviceAuth::Mac { .. } => {
-                        // send not yet supported error
-                    }
-                }
-            }
-            _ => {}
-        }
+        //         let namespace_bytes = document.device_signed.namespaces;
+        //         let device_auth = document.device_signed.device_auth;
+        //         match device_auth {
+        //             DeviceAuth::Signature { device_signature } => {
+        //                 let detached_payload = Tag24::new(UnattendedDeviceAuthentication::new(
+        //                     session_transcript,
+        //                     document.doc_type,
+        //                     namespace_bytes,
+        //                 ))
+        //                 .map_err(|_| IsomdlError::CborDecodingError)?;
+        //                 let external_aad = None;
+        //                 let cbor_payload = serde_cbor::to_vec(&detached_payload)?;
+        //                 let result = device_signature.verify::<VerifyingKey, Signature>(
+        //                     &verifying_key,
+        //                     Some(cbor_payload),
+        //                     external_aad,
+        //                 );
+        //                 if !result.success() {
+        //                     return Err(IsomdlError::ParsingError)?;
+        //                 }
+        //             }
+        //             DeviceAuth::Mac { .. } => {
+        //                 // send not yet supported error
+        //             }
+        //         }
+        //     }
+        //     _ => {}
+        // }
 
         let mut parsed_response = BTreeMap::<String, serde_json::Value>::new();
         device_response
