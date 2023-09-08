@@ -373,7 +373,9 @@ pub fn decrypted_authorization_response(
     if let Some(token) = vp_token {
         match token {
             Value::String(s) => {
-                let result = base64url::decode(&s).unwrap();
+                let tkn = s.clone();
+                let tkn = tkn.replace('=', "");
+                let result = base64url::decode(&tkn).map_err(|e| e.to_string())?;
                 Ok((result, mdoc_generated_nonce.to_owned()))
             }
             _ => Err(Openid4vpError::UnrecognizedField),
