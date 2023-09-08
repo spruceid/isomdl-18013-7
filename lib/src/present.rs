@@ -502,13 +502,10 @@ fn encrypted_authorization_response(
 
     let presentation_definition = state.request_object.presentation_definition;
     let pres_def_id = match presentation_definition {
-        PresDef::PresentationDefinition { presentation_definition } => {
-            presentation_definition.id
-        }, 
-        _ => {
-            return Err(Openid4vpError::InvalidPresentationDefinitionReference)
-        }
-
+        PresDef::PresentationDefinition {
+            presentation_definition,
+        } => presentation_definition.id,
+        _ => return Err(Openid4vpError::InvalidPresentationDefinitionReference),
     };
 
     let presentation_submission = PresentationSubmission {
@@ -516,8 +513,6 @@ fn encrypted_authorization_response(
         definition_id: pres_def_id,
         descriptor_map: vec![descriptor_map],
     };
-
-    println!("epk: {:?}", state.verifier_epk.clone());
 
     let inner_bytes = to_vec(&device_response)?;
     let vp_token = base64url::encode(inner_bytes);

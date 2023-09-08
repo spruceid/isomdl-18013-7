@@ -74,7 +74,7 @@ pub trait ReaderSession {
             .find(|doc| doc.doc_type == "org.iso.18013.5.1.mDL")
             .ok_or(IsomdlError::DocumentTypeError)?;
 
-        let issuer_signed = document.issuer_signed.clone();
+        let issuer_signed = document.issuer_signed;
 
         let mso_bytes = issuer_signed
             .issuer_auth
@@ -102,7 +102,7 @@ pub trait ReaderSession {
         //         if let Some(l) = leaf {
         //             match l {
         //                 CborValue::Text(t) => {
-                            
+
         //                     let x509 = x509_cert::Certificate::from_der(t.as_bytes())?;
         //                     let signer_key = x509.tbs_certificate.subject_public_key_info.subject_public_key;
         //                     signer_key
@@ -128,7 +128,7 @@ pub trait ReaderSession {
         // };
         // let Some(bytes) = signer_key.as_bytes() else { return Err(Openid4vpError::JoseError("invalid key bytes".to_string()))};
         // let key =VerifyingKey::from_public_key_der(bytes)?;
-        
+
         // parse x509 certificate
         // grab public key from cert
         // validate the chain
